@@ -1,0 +1,31 @@
+#!/bin/bash
+
+# Function to check if Wayfire is running
+is_wayfire_running() {
+    pgrep -x "wayfire" > /dev/null
+    return $?
+}
+
+
+wayfire &
+wayfire_pid=$!
+
+# Wait until the server starts
+while ! is_wayfire_running; do
+ sleep 1
+done
+
+sleep 5
+
+# bodge ... we should exit when budgie-session-binary quits
+#budgie-desktop "$@"
+#budgie_desktop_exit_code=$?
+
+while true
+do
+ sleep 10
+done
+
+kill $wayfire_pid
+
+exit $budgie_desktop_exit_code
