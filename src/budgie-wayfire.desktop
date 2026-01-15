@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Budgie Desktop (Wayfire)
+Exec=startbudgiewayfire
+TryExec=startbudgiewayfire
+Icon=
+Type=Application
+DesktopNames=Budgie
+Keywords=launch;Budgie;desktop;session;

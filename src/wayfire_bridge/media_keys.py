@@ -1,0 +1,206 @@
+"""
+Media keys handler for Wayfire Bridge
+Handles static media key bindings from gsettings
+"""
+
+import sys
+import gi
+
+gi.require_version('Gio', '2.0')
+from gi.repository import Gio
+
+
+# Mapping of media key gsettings to Wayfire commands
+# Format: gsetting_key: (command_name, wayfire_command, plugin_requirement)
+MEDIA_KEY_MAPPINGS = {
+    'terminal': {
+        'command_name': 'launch_terminal',
+        'command': 'x-terminal-emulator',
+        'fallback_command': 'xfce4-terminal',
+        'plugin': None
+    },
+    'www': {
+        'command_name': 'launch_browser',
+        'command': 'x-www-browser',
+        'fallback_command': 'firefox',
+        'plugin': None
+    },
+    'email': {
+        'command_name': 'launch_email',
+        'command': 'xdg-email',
+        'fallback_command': 'thunderbird',
+        'plugin': None
+    },
+    'home': {
+        'command_name': 'launch_file_manager',
+        'command': 'xdg-open ~',
+        'fallback_command': 'nautilus',
+        'plugin': None
+    },
+    'calculator': {
+        'command_name': 'launch_calculator',
+        'command': 'gnome-calculator',
+        'fallback_command': 'gcalctool',
+        'plugin': None
+    },
+    'help': {
+        'command_name': 'launch_help',
+        'command': 'yelp',
+        'fallback_command': 'firefox https://help.ubuntu.com',
+        'plugin': None
+    },
+    'magnifier': {
+        'command_name': 'toggle_magnifier',
+        'command': 'wf-mag',  # Wayfire magnifier toggle script
+        'fallback_command': None,
+        'plugin': 'mag'  # Requires mag plugin
+    },
+    'magnifier-zoom-in': {
+        'command_name': 'magnifier_zoom_in',
+        'command': 'wf-mag zoom-in',
+        'fallback_command': None,
+        'plugin': 'mag'
+    },
+    'magnifier-zoom-out': {
+        'command_name': 'magnifier_zoom_out',
+        'command': 'wf-mag zoom-out',
+        'fallback_command': None,
+        'plugin': 'mag'
+    },
+    'screenreader': {
+        'command_name': 'toggle_screenreader',
+        'command': 'orca --replace',
+        'fallback_command': None,
+        'plugin': None
+    },
+    'screensaver': {
+        'command_name': 'lock_screen',
+        'command': 'loginctl lock-session',
+        'fallback_command': 'light-locker-command -l',
+        'plugin': None
+    },
+}
+
+
+class MediaKeysHandler:
+    """Handles static media key bindings"""
+    
+    def __init__(self, config_manager, transforms):
+        self.config_manager = config_manager
+        self.transforms = transforms
+        self.schema = 'org.gnome.settings-daemon.plugins.media-keys'
+        self.settings = None
+    
+    def setup(self):
+        """Setup monitoring for media keys"""
+        try:
+            source = Gio.SettingsSchemaSource.get_default()
+            if not source.lookup(self.schema, True):
+                print(f"Media keys schema not found", file=sys.stderr)
+                return
+            
+            self.settings = Gio.Settings.new(self.schema)
+            
+            # Setup monitoring for each media key
+            for key, mapping in MEDIA_KEY_MAPPINGS.items():
+                try:
+                    # Apply initial value
+                    self._apply_media_key(key, mapping)
+                    
+                    # Monitor changes
+                    self.settings.connect(
+                        f'changed::{key}',
+                        lambda s, k, m=mapping, gk=key: self._on_media_key_changed(gk, m)
+                    )
+                except Exception as e:
+                    print(f"Error setting up media key {key}: {e}", file=sys.stderr)
+            
+            print(f"Media keys monitoring enabled ({len(MEDIA_KEY_MAPPINGS)} keys)")
+            
+        except Exception as e:
+            print(f"Error setting up media keys: {e}", file=sys.stderr)
+    
+    def _apply_media_key(self, gsettings_key: str, mapping: dict):
+        """Apply a media key binding"""
+        try:
+            if not self.settings:
+                return
+            
+            # Get the keybinding from gsettings
+            try:
+                value = self.settings.get_value(gsettings_key).unpack()
+            except Exception as e:
+                print(f"Could not read media key {gsettings_key}: {e}", file=sys.stderr)
+                return
+            
+            print(f"Media key {gsettings_key}: raw value = {value} (type: {type(value).__name__})")
+            
+            # Handle both string and list formats
+            keybinding = None
+            if isinstance(value, list):
+                if len(value) == 0 or (len(value) == 1 and value[0] == ''):
+                    # Empty list or list with empty string means no binding
+                    print(f"  → {gsettings_key}: no binding set (empty)")
+                    self._remove_media_key_binding(mapping['command_name'])
+                    return
+                keybinding = value[0]
+            elif isinstance(value, str):
+                if not value or value == 'disabled' or value == '':
+                    print(f"  → {gsettings_key}: disabled or empty")
+                    self._remove_media_key_binding(mapping['command_name'])
+                    return
+                keybinding = value
+            else:
+                print(f"  → {gsettings_key}: unknown format {type(value)}", file=sys.stderr)
+                return
+            
+            print(f"  → {gsettings_key}: keybinding = '{keybinding}'")
+            
+            # Convert to Wayfire format
+            wayfire_binding = self.transforms.convert_keybinding(keybinding)
+            print(f"  → {gsettings_key}: wayfire format = '{wayfire_binding}'")
+            
+            if wayfire_binding:
+                # Set binding and command
+                binding_option = f"binding_{mapping['command_name']}"
+                command_option = f"command_{mapping['command_name']}"
+                
+                self.config_manager.set_value('command', binding_option, wayfire_binding)
+                self.config_manager.set_value('command', command_option, mapping['command'])
+                
+                # Verify it was set
+                check_binding = self.config_manager.get_value('command', binding_option)
+                check_command = self.config_manager.get_value('command', command_option)
+                print(f"  → Set in config: {binding_option} = {check_binding}")
+                print(f"  → Set in config: {command_option} = {check_command}")
+                
+                # If plugin required, add note
+                if mapping.get('plugin'):
+                    print(f"✓ Applied media key: {gsettings_key} -> {mapping['command_name']} "
+                          f"(requires {mapping['plugin']} plugin)")
+                else:
+                    print(f"✓ Applied media key: {gsettings_key} = {wayfire_binding} -> {mapping['command']}")
+            else:
+                # No binding set, remove if exists
+                print(f"  → {gsettings_key}: could not convert keybinding '{keybinding}'")
+                self._remove_media_key_binding(mapping['command_name'])
+        
+        except Exception as e:
+            print(f"Error applying media key {gsettings_key}: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc()
+    
+    def _remove_media_key_binding(self, command_name: str):
+        """Remove a media key binding"""
+        binding_option = f"binding_{command_name}"
+        command_option = f"command_{command_name}"
+        
+        self.config_manager.remove_option('command', binding_option)
+        self.config_manager.remove_option('command', command_option)
+    
+    def _on_media_key_changed(self, key: str, mapping: dict):
+        """Handle media key change"""
+        print(f"Media key changed: {key}")
+        self._apply_media_key(key, mapping)
+        self.config_manager.save()
+        self.config_manager.reload_wayfire()

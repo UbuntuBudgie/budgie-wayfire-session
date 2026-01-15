@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+
+# Function to check if Wayfire is running
+is_session_running() {
+    pgrep -f "budgie-session-binary" > /dev/null
+    return $?
+}
+
+# Set the XDG_RUNTIME_DIR if we can not get it in systems
+# without systemd
+if [ -z "${XDG_RUNTIME_DIR}" ]; then
+    if [ -d "/run/user" ]; then
+        XDG_RUNTIME_DIR="/run/user/$(id -ru)"
+        export XDG_RUNTIME_DIR
+    else
+        if [ -d "/var/run/user" ]; then
+            XDG_RUNTIME_DIR="/var/run/user/$(id -ru)"
+            export XDG_RUNTIME_DIR
+        else
+            XDG_RUNTIME_DIR="/tmp/${USER}-runtime"
+            export XDG_RUNTIME_DIR
+        fi
+    fi
+fi
+if [ ! -e "${XDG_RUNTIME_DIR}" ]; then
+    logger "XDG_RUNTIME_DIR is invalid or does not exist!"
+    logger "Creating XDG_RUNTIME_DIR..."
+    mkdir -p -m 0700 "${XDG_RUNTIME_DIR}" || {
+        logger "Unable to create runtime directory ${XDG_RUNTIME_DIR}!"
+        exit 1
+    }
+fi
+
+# freedesktop specifications mandate that the definition
+# of XDG_SESSION_TYPE should be respected
+XDG_SESSION_TYPE="wayland"
+export XDG_SESSION_TYPE
+# Make sure all toolkits use their Wayland backend
+#
+# For Gtk applications also the x11 backend as a safe fallback
+if [ -z "${GDK_BACKEND}" ]; then
+    GDK_BACKEND="wayland,x11"
+    export GDK_BACKEND
+fi
+if [ -z "${QT_QPA_PLATFORM}" ]; then
+    QT_QPA_PLATFORM="wayland"
+    export QT_QPA_PLATFORM
+fi
+
+# allow compatible Qt6 apps to theme with gtk3
+if [ -z "${QT_QPA_PLATFORMTHEME}" ]; then
+    QT_QPA_PLATFORMTHEME="gtk3"
+    export QT_QPA_PLATFORMTHEME
+fi
+
+# In many OS the wayland backend for clutter does not work, so
+# use the safe "gdk" backend instead
+if [ -z "${CLUTTER_BACKEND}" ]; then
+    CLUTTER_BACKEND="gdk"
+    export CLUTTER_BACKEND
+fi
+if [ -z "${SDL_VIDEODRIVER}" ]; then
+    SDL_VIDEODRIVER="wayland"
+    export SDL_VIDEODRIVER
+fi
+
+# Add a wlroots helper to allow running in VirtualBox
+if grep -q "VirtualBox" /sys/class/dmi/id/product_name 2>/dev/null; then
+    export WLR_RENDERER=pixman
+fi
+
+# Add a helper for electron based apps to think they are running under GNOME
+export GNOME_DESKTOP_SESSION_ID=this-is-deprecated
+
+# This is default for current firefox/thunderbird
+MOZ_ENABLE_WAYLAND="1"
+export MOZ_ENABLE_WAYLAND
+
+default_compositor="wayfire"
+
+# Create specific wayfire directory for Budgie
+if [ ! -d "${XDG_CONFIG_HOME:-${HOME}/.config}/budgie-desktop/wayfire" ]; then
+    mkdir -p "${XDG_CONFIG_HOME:-${HOME}/.config}/budgie-desktop/wayfire"
+fi
+
+# Copy specific wayfire configuration file for Budgie
+if [ ! -f "${XDG_CONFIG_HOME:-${HOME}/.config}/budgie-desktop/wayfire/wayfire.ini" ]; then
+    cp -p @datadir@/budgie-desktop/wayfire/wayfire.ini "${XDG_CONFIG_HOME:-${HOME}/.config}/budgie-desktop/wayfire/wayfire.ini"
+fi
+
+# Budgie will use its own config directory to avoid
+# conflict with current wayfire setup
+WAYFIRE_CONFIG_FILE="${XDG_CONFIG_HOME:-${HOME}/.config}/budgie-desktop/wayfire/wayfire.ini"
+export WAYFIRE_CONFIG_FILE
+
+# Start a D-Bus session if there isn't one already.
+if [ -z "$DBUS_SESSION_BUS_ADDRESS" ]; then
+    eval $(dbus-launch --sh-syntax --exit-with-session)
+fi
+
+# workaround https://github.com/canonical/lightdm/issues/63
+if [ -n "$XDG_VTNR" ] && [ -f "/sys/devices/virtual/tty/tty0/active" ]; then
+    VT_TEST_CNT=1
+    while true; do
+        CURRENT_VT=$(cat /sys/devices/virtual/tty/tty0/active)
+        if [ "$CURRENT_VT" = "tty$XDG_VTNR" ]; then
+            break
+        fi
+        VT_TEST_CNT=$((VT_TEST_CNT + 1))
+        if [ "$VT_TEST_CNT" -gt 100 ]; then
+            logger "VT $XDG_VTNR is expected but the switch did not happen in the last second, continuing anyway."
+            break
+        fi
+        sleep 0.01
+    done
+fi
+
+# Start wayfire in the background
+wayfire --config $WAYFIRE_CONFIG_FILE &
+WAYFIRE_PID=$!
+
+# Small additional delay to ensure wayfire is fully initialized
+sleep 0.5
+
+# now wait until budgie-session-binary is autostarted
+for ((i=1; i<=10; i++)); do
+    if is_session_running; then
+        break
+    fi
+
+    sleep 1
+done
+
+# wait until the session is exited before killing wayfire
+pidwait -f budgie-session-binary
+
+# Clean up remaining processes
+kill $WAYFIRE_PID 2>/dev/null
+
+exit 0

@@ -1,0 +1,30 @@
+[Unit]
+Description=Wayfire Bridge - Gsettings to Wayfire Configuration Sync
+Documentation=man:wayfire-bridge(1)
+PartOf=graphical-session.target
+After=graphical-session.target
+ConditionEnvironment=WAYLAND_DISPLAY
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/wayfire-bridge
+Restart=on-failure
+RestartSec=5
+
+# Environment
+Environment="PYTHONUNBUFFERED=1"
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wayfire-bridge
+
+# Security hardening
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.config/budgie-desktop/wayfire
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=wayfire-session.target graphical-session.target
