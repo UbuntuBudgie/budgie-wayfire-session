@@ -11,6 +11,7 @@ from .config_manager import ConfigManager
 from .transforms import TransformFunctions
 from .keybindings import CustomKeybindingsHandler
 from .media_keys import MediaKeysHandler
+from .budgie_wm_actions import BudgieWMActionsHandler
 
 __all__ = [
     'WayfireBridge',
@@ -18,4 +19,5 @@ __all__ = [
     'TransformFunctions',
     'CustomKeybindingsHandler',
     'MediaKeysHandler',
+    'BudgieWMActionsHandler',
 ]

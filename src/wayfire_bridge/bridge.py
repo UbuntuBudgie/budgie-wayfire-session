@@ -15,6 +15,7 @@ from .keybindings import CustomKeybindingsHandler
 from .media_keys import MediaKeysHandler
 from .mappings import GSETTINGS_MAPPINGS
 from .transforms import TransformFunctions
+from .budgie_wm_actions import BudgieWMActionsHandler
 
 
 class WayfireBridge:
@@ -34,11 +35,17 @@ class WayfireBridge:
             self.config_manager,
             self.transforms
         )
+
+        self.budgie_wm_handler = BudgieWMActionsHandler(
+            self.config_manager,
+            self.transforms
+        )
         
         # Setup all gsettings monitoring
         self.setup_gsettings()
         self.keybindings_handler.setup()
         self.media_keys_handler.setup()
+        self.budgie_wm_handler.setup()
     
     def setup_gsettings(self):
         """Setup gsettings monitoring for all mapped keys"""

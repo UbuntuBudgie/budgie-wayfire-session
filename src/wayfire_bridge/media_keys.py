@@ -34,49 +34,163 @@ MEDIA_KEY_MAPPINGS = {
     'home': {
         'command_name': 'launch_file_manager',
         'command': 'xdg-open ~',
-        'fallback_command': 'nautilus',
+        'fallback_command': 'nemo',
         'plugin': None
     },
     'calculator': {
         'command_name': 'launch_calculator',
-        'command': 'gnome-calculator',
-        'fallback_command': 'gcalctool',
+        'command': 'mate-calc',
+        'fallback_command': 'gnome-calculator',
         'plugin': None
     },
     'help': {
         'command_name': 'launch_help',
-        'command': 'yelp',
-        'fallback_command': 'firefox https://help.ubuntu.com',
+        'command': '',
+        'fallback_command': '',
+        'plugin': None
+    },
+    'search': {
+        'command_name': 'launch_search',
+        'command': '',
+        'fallback_command': '',
         'plugin': None
     },
     'magnifier': {
         'command_name': 'toggle_magnifier',
         'command': 'wf-mag',  # Wayfire magnifier toggle script
-        'fallback_command': None,
+        'fallback_command': '',
         'plugin': 'mag'  # Requires mag plugin
     },
     'magnifier-zoom-in': {
         'command_name': 'magnifier_zoom_in',
         'command': 'wf-mag zoom-in',
-        'fallback_command': None,
+        'fallback_command': '',
         'plugin': 'mag'
     },
     'magnifier-zoom-out': {
         'command_name': 'magnifier_zoom_out',
         'command': 'wf-mag zoom-out',
-        'fallback_command': None,
+        'fallback_command': '',
         'plugin': 'mag'
     },
     'screenreader': {
         'command_name': 'toggle_screenreader',
-        'command': 'orca --replace',
-        'fallback_command': None,
+        'command': '',
+        'fallback_command': '',
         'plugin': None
     },
     'screensaver': {
         'command_name': 'lock_screen',
         'command': 'loginctl lock-session',
-        'fallback_command': 'light-locker-command -l',
+        'fallback_command': 'dbus-send --type=method_call --dest=org.buddiesofbudgie.BudgieScreenlock /org/buddiesofbudgie/Screenlock org.buddiesofbudgie.BudgieScreenlock.Lock',
+        'plugin': None
+    },
+    'decrease-text-size': {
+        'command_name': 'decrease_text_size',
+        'command': '',
+        'fallback_command': '',
+        'plugin': None
+    },
+    'toggle-contrast': {
+        'command_name': 'toggle_contrast',
+        'command': '',
+        'fallback_command': '',
+        'plugin': None
+    },
+    'increase-text-size': {
+        'command_name': 'increase_text_size',
+        'command': '',
+        'fallback_command': '',
+        'plugin': None
+    },
+    'on-screen-keyboard': {
+        'command_name': 'on_screen_keyboard',
+        'command': '',
+        'fallback_command': '',
+        'plugin': None
+    },
+    'email': {
+        'command_name': 'on_email',
+        'command': 'xdg-email',
+        'fallback_command': '',
+        'plugin': None
+    },
+    'control-center': {
+        'command_name': 'on_control_center',
+        'command': 'budgie-desktop-settings',
+        'fallback_command': '',
+        'plugin': None
+    },
+    'eject': {
+        'command_name': 'on_eject',
+        'command': '',
+        'fallback_command': '',
+        'plugin': None
+    },
+    'media': {
+        'command_name': 'on_media',
+        'command': '',
+        'fallback_command': '',
+        'plugin': None
+    },
+    'mic-mute': {
+        'command_name': 'on_mic_mute',
+        'command': '',
+        'fallback_command': '',
+        'plugin': None
+    },
+    'next': {
+        'command_name': 'on_next',
+        'command': '',
+        'fallback_command': '',
+        'plugin': None
+    },
+    'pause': {
+        'command_name': 'on_pause',
+        'command': '',
+        'fallback_command': '',
+        'plugin': None
+    },
+    'play': {
+        'command_name': 'on_play',
+        'command': '',
+        'fallback_command': '',
+        'plugin': None
+    },
+    'previous': {
+        'command_name': 'on_previous',
+        'command': '',
+        'fallback_command': '',
+        'plugin': None
+    },
+    'stop': {
+        'command_name': 'on_stop',
+        'command': '',
+        'fallback_command': '',
+        'plugin': None
+    },
+    'volume-down': {
+        'command_name': 'on_volume_down',
+        'command': "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-",
+        'fallback_command': '',
+        'plugin': None
+    },
+    'volume-mute': {
+        'command_name': 'on_volume_mute',
+        'command': "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle",
+        'fallback_command': '',
+        'plugin': None
+    },
+    'volume-up': {
+        'command_name': 'on_volume_up',
+        'command': "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+",
+        'fallback_command': '',
+        'plugin': None
+    },
+    'logout': {
+        'command_name': 'on_logout',
+        'command': "budgie-session-quit",
+        'fallback_command': '',
         'plugin': None
     },
 }
@@ -88,7 +202,7 @@ class MediaKeysHandler:
     def __init__(self, config_manager, transforms):
         self.config_manager = config_manager
         self.transforms = transforms
-        self.schema = 'org.gnome.settings-daemon.plugins.media-keys'
+        self.schema = 'org.buddiesofbudgie.settings-daemon.plugins.media-keys'
         self.settings = None
     
     def setup(self):
