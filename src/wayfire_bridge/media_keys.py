@@ -81,8 +81,8 @@ MEDIA_KEY_MAPPINGS = {
     },
     'screensaver': {
         'command_name': 'lock_screen',
-        'command': 'loginctl lock-session',
-        'fallback_command': 'dbus-send --type=method_call --dest=org.buddiesofbudgie.BudgieScreenlock /org/buddiesofbudgie/Screenlock org.buddiesofbudgie.BudgieScreenlock.Lock',
+        'command': 'dbus-send --type=method_call --dest=org.buddiesofbudgie.BudgieScreenlock /org/buddiesofbudgie/Screenlock org.buddiesofbudgie.BudgieScreenlock.Lock',
+        'fallback_command': '',
         'plugin': None
     },
     'decrease-text-size': {

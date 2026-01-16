@@ -114,9 +114,12 @@ class TransformFunctions:
             }
             key = key_map.get(key, key)
 
-            # Build the keybinding: <modifier1> <modifier2> KEY_X
-            # Modifiers FIRST (lowercase in angle brackets), key LAST
-            key_part = f"KEY_{key.upper()}"
+            # Check if it's a hardware key (XF86*)
+            # These don't get KEY_ prefix
+            if key.startswith('XF86'):
+                key_part = key  # Use as-is: XF86AudioLowerVolume
+            else:
+                key_part = f"KEY_{key.upper()}"
 
             if modifiers:
                 # Join modifiers with space, then add key at the end
