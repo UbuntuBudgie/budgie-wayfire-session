@@ -1,8 +1,10 @@
 session creation for wayfire with budgie-desktop
 
+# ubuntu prereqs
     sudo apt install meson build-essential git
     sudo apt install procps wayfire
 
+# install and start
     git clone https://github.com/ubuntubudgie/budgie-wayfire-session
     cd budgie-wayfire-sesson
     meson build --prefix=/usr
@@ -10,6 +12,7 @@ session creation for wayfire with budgie-desktop
 
 At the login screen, choose the budgie (wayfire) session to launch
 
+```
 in the src folder
 wayfire_bridge.py              # Main entry point
 wayfire_bridge/
@@ -85,8 +88,7 @@ Custom Keybindings
 
 Automatically synced from budgie-control-center
 Full create/update/delete support
-
-----
+```
 
 installs wayfire.ini to ~/.config/budgie-desktop/wayfire/
 
@@ -95,7 +97,7 @@ It also starts the bridge that is installed to /usr/libexec/budgie-desktop/budgi
 
 ----
 
-debugging
+# debugging
 
 kill the budgie_wayfire_bridge.py
 
