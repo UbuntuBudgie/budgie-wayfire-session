@@ -42,13 +42,13 @@ BUDGIE_WM_ACTION_MAPPINGS = {
 
 class BudgieWMActionsHandler:
     """Handles Budgie WM action keybindings"""
-    
+
     def __init__(self, config_manager, transforms):
         self.config_manager = config_manager
         self.transforms = transforms
         self.schema = 'com.solus-project.budgie-wm'
         self.settings = None
-    
+
     def setup(self):
         """Setup monitoring for Budgie WM action keys"""
         try:
@@ -56,15 +56,15 @@ class BudgieWMActionsHandler:
             if not source.lookup(self.schema, True):
                 print(f"Budgie WM schema not found", file=sys.stderr)
                 return
-            
+
             self.settings = Gio.Settings.new(self.schema)
-            
+
             # Setup monitoring for each action
             for key, mapping in BUDGIE_WM_ACTION_MAPPINGS.items():
                 try:
                     # Apply initial value
                     self._apply_action_key(key, mapping)
-                    
+
                     # Monitor changes
                     self.settings.connect(
                         f'changed::{key}',
@@ -72,71 +72,88 @@ class BudgieWMActionsHandler:
                     )
                 except Exception as e:
                     print(f"Error setting up Budgie WM action {key}: {e}", file=sys.stderr)
-            
+
             print(f"Budgie WM actions monitoring enabled ({len(BUDGIE_WM_ACTION_MAPPINGS)} actions)")
-            
+
         except Exception as e:
             print(f"Error setting up Budgie WM actions: {e}", file=sys.stderr)
-    
+
     def _apply_action_key(self, gsettings_key: str, mapping: dict):
         """Apply a Budgie WM action keybinding"""
         try:
             if not self.settings:
                 return
-            
-            # Get the keybinding (it's a string, not an array like media keys)
+
+            # Get the keybinding (it's a string array like media-keys)
             try:
-                keybinding = self.settings.get_string(gsettings_key)
+                value = self.settings.get_value(gsettings_key).unpack()
             except Exception as e:
                 print(f"Could not read Budgie WM action {gsettings_key}: {e}", file=sys.stderr)
                 return
-            
-            print(f"Budgie WM action {gsettings_key}: raw value = '{keybinding}' (type: str)")
-            
-            # Check if empty or disabled
-            if not keybinding or keybinding == '' or keybinding == 'disabled':
-                print(f"  → {gsettings_key}: disabled or empty")
+
+            print(f"Budgie WM action {gsettings_key}: raw value = {value} (type: {type(value).__name__})")
+
+            # Handle string arrays - multiple keybindings can invoke same action
+            keybindings = []
+            if isinstance(value, list):
+                # Filter out empty strings
+                keybindings = [k for k in value if k and k != '' and k != 'disabled']
+            elif isinstance(value, str):
+                if value and value != '' and value != 'disabled':
+                    keybindings = [value]
+
+            if not keybindings:
+                print(f"  → {gsettings_key}: no binding set (empty)")
                 self._remove_action_binding(mapping['command_name'])
                 return
-            
-            print(f"  → {gsettings_key}: keybinding = '{keybinding}'")
-            
-            # Convert to Wayfire format
-            wayfire_binding = self.transforms.convert_keybinding(keybinding)
-            print(f"  → {gsettings_key}: wayfire format = '{wayfire_binding}'")
-            
-            if wayfire_binding:
-                # Set binding and command
-                binding_option = f"binding_{mapping['command_name']}"
-                command_option = f"command_{mapping['command_name']}"
-                
-                self.config_manager.set_value('command', binding_option, wayfire_binding)
-                self.config_manager.set_value('command', command_option, mapping['command'])
-                
-                # Verify it was set
-                check_binding = self.config_manager.get_value('command', binding_option)
-                check_command = self.config_manager.get_value('command', command_option)
-                print(f"  → Set in config: {binding_option} = {check_binding}")
-                print(f"  → Set in config: {command_option} = {check_command}")
-                
-                print(f"✓ Applied Budgie WM action: {gsettings_key} = {wayfire_binding} -> {mapping['command']}")
-            else:
-                print(f"  → {gsettings_key}: could not convert keybinding '{keybinding}'")
+
+            print(f"  → {gsettings_key}: keybindings = {keybindings}")
+
+            # Convert each keybinding to Wayfire format
+            wayfire_bindings = []
+            for kb in keybindings:
+                wayfire_kb = self.transforms.convert_keybinding(kb)
+                if wayfire_kb:
+                    wayfire_bindings.append(wayfire_kb)
+
+            if not wayfire_bindings:
+                print(f"  → {gsettings_key}: could not convert any keybindings")
                 self._remove_action_binding(mapping['command_name'])
-        
+                return
+
+            # Join multiple keybindings with pipe separator
+            # Example: ['<super>C', '<ctrl><alt>C'] -> '<super> KEY_C | <ctrl> <alt> KEY_C'
+            wayfire_binding = ' | '.join(wayfire_bindings)
+            print(f"  → {gsettings_key}: wayfire format = '{wayfire_binding}'")
+
+            # Set binding and command
+            binding_option = f"binding_{mapping['command_name']}"
+            command_option = f"command_{mapping['command_name']}"
+
+            self.config_manager.set_value('command', binding_option, wayfire_binding)
+            self.config_manager.set_value('command', command_option, mapping['command'])
+
+            # Verify it was set
+            check_binding = self.config_manager.get_value('command', binding_option)
+            check_command = self.config_manager.get_value('command', command_option)
+            print(f"  → Set in config: {binding_option} = {check_binding}")
+            print(f"  → Set in config: {command_option} = {check_command}")
+
+            print(f"✓ Applied Budgie WM action: {gsettings_key} = {wayfire_binding} -> {mapping['command']}")
+
         except Exception as e:
             print(f"Error applying Budgie WM action {gsettings_key}: {e}", file=sys.stderr)
             import traceback
             traceback.print_exc()
-    
+
     def _remove_action_binding(self, command_name: str):
         """Remove a Budgie WM action binding"""
         binding_option = f"binding_{command_name}"
         command_option = f"command_{command_name}"
-        
+
         self.config_manager.remove_option('command', binding_option)
         self.config_manager.remove_option('command', command_option)
-    
+
     def _on_action_key_changed(self, key: str, mapping: dict):
         """Handle Budgie WM action key change"""
         print(f"Budgie WM action changed: {key}")

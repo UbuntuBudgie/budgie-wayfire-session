@@ -198,13 +198,13 @@ MEDIA_KEY_MAPPINGS = {
 
 class MediaKeysHandler:
     """Handles static media key bindings"""
-    
+
     def __init__(self, config_manager, transforms):
         self.config_manager = config_manager
         self.transforms = transforms
         self.schema = 'org.buddiesofbudgie.settings-daemon.plugins.media-keys'
         self.settings = None
-    
+
     def setup(self):
         """Setup monitoring for media keys"""
         try:
@@ -212,15 +212,15 @@ class MediaKeysHandler:
             if not source.lookup(self.schema, True):
                 print(f"Media keys schema not found", file=sys.stderr)
                 return
-            
+
             self.settings = Gio.Settings.new(self.schema)
-            
+
             # Setup monitoring for each media key
             for key, mapping in MEDIA_KEY_MAPPINGS.items():
                 try:
                     # Apply initial value
                     self._apply_media_key(key, mapping)
-                    
+
                     # Monitor changes
                     self.settings.connect(
                         f'changed::{key}',
@@ -228,90 +228,121 @@ class MediaKeysHandler:
                     )
                 except Exception as e:
                     print(f"Error setting up media key {key}: {e}", file=sys.stderr)
-            
+
             print(f"Media keys monitoring enabled ({len(MEDIA_KEY_MAPPINGS)} keys)")
-            
+
         except Exception as e:
             print(f"Error setting up media keys: {e}", file=sys.stderr)
-    
+
     def _apply_media_key(self, gsettings_key: str, mapping: dict):
         """Apply a media key binding"""
         try:
             if not self.settings:
                 return
-            
+
             # Get the keybinding from gsettings
             try:
                 value = self.settings.get_value(gsettings_key).unpack()
             except Exception as e:
                 print(f"Could not read media key {gsettings_key}: {e}", file=sys.stderr)
                 return
-            
+
             print(f"Media key {gsettings_key}: raw value = {value} (type: {type(value).__name__})")
-            
-            # Handle both string and list formats
-            keybinding = None
+
+            # Handle string arrays
+            keybindings = []
             if isinstance(value, list):
-                if len(value) == 0 or (len(value) == 1 and value[0] == ''):
-                    # Empty list or list with empty string means no binding
-                    print(f"  → {gsettings_key}: no binding set (empty)")
-                    self._remove_media_key_binding(mapping['command_name'])
-                    return
-                keybinding = value[0]
+                # Filter out empty strings
+                keybindings = [k for k in value if k and k != '' and k != 'disabled']
+
+                # If empty, try -static variant (if it exists)
+                if not keybindings:
+                    static_key = f"{gsettings_key}-static"
+
+                    # Check if -static key exists in schema
+                    schema_obj = self.settings.get_property('settings-schema')
+                    if schema_obj and schema_obj.has_key(static_key):
+                        try:
+                            static_value = self.settings.get_value(static_key).unpack()
+                            if isinstance(static_value, list):
+                                keybindings = [k for k in static_value if k and k != '' and k != 'disabled']
+                                if keybindings:
+                                    print(f"  → Using {static_key} (static fallback): {keybindings}")
+                        except Exception as e:
+                            print(f"  → Could not read {static_key}: {e}", file=sys.stderr)
+                    else:
+                        print(f"  → No {static_key} key available")
             elif isinstance(value, str):
-                if not value or value == 'disabled' or value == '':
-                    print(f"  → {gsettings_key}: disabled or empty")
+                if value and value != '' and value != 'disabled':
+                    keybindings = [value]
+
+            if not keybindings:
+                print(f"  → {gsettings_key}: no binding set (empty)")
+                self._remove_media_key_binding(mapping['command_name'])
+                return
+
+            print(f"  → {gsettings_key}: keybindings = {keybindings}")
+
+            # Convert each keybinding to Wayfire format
+            wayfire_bindings = []
+            for kb in keybindings:
+                wayfire_kb = self.transforms.convert_keybinding(kb)
+                if wayfire_kb:
+                    wayfire_bindings.append(wayfire_kb)
+
+            if not wayfire_bindings:
+                print(f"  → {gsettings_key}: could not convert any keybindings")
+                self._remove_media_key_binding(mapping['command_name'])
+                return
+
+            # Join multiple keybindings with pipe separator
+            wayfire_binding = ' | '.join(wayfire_bindings)
+            print(f"  → {gsettings_key}: wayfire format = '{wayfire_binding}'")
+
+            # Check if command is empty - if so, don't write the binding
+            command = mapping['command']
+            if not command or command.strip() == '':
+                # Try fallback command
+                command = mapping.get('fallback_command', '')
+                if not command or command.strip() == '':
+                    print(f"  → {gsettings_key}: no command defined, skipping")
                     self._remove_media_key_binding(mapping['command_name'])
                     return
-                keybinding = value
+                print(f"  → Using fallback command: {command}")
+
+            # Set binding and command
+            binding_option = f"binding_{mapping['command_name']}"
+            command_option = f"command_{mapping['command_name']}"
+
+            self.config_manager.set_value('command', binding_option, wayfire_binding)
+            self.config_manager.set_value('command', command_option, command)
+
+            # Verify it was set
+            check_binding = self.config_manager.get_value('command', binding_option)
+            check_command = self.config_manager.get_value('command', command_option)
+            print(f"  → Set in config: {binding_option} = {check_binding}")
+            print(f"  → Set in config: {command_option} = {check_command}")
+
+            # If plugin required, add note
+            if mapping.get('plugin'):
+                print(f"✓ Applied media key: {gsettings_key} -> {mapping['command_name']} "
+                    f"(requires {mapping['plugin']} plugin)")
             else:
-                print(f"  → {gsettings_key}: unknown format {type(value)}", file=sys.stderr)
-                return
-            
-            print(f"  → {gsettings_key}: keybinding = '{keybinding}'")
-            
-            # Convert to Wayfire format
-            wayfire_binding = self.transforms.convert_keybinding(keybinding)
-            print(f"  → {gsettings_key}: wayfire format = '{wayfire_binding}'")
-            
-            if wayfire_binding:
-                # Set binding and command
-                binding_option = f"binding_{mapping['command_name']}"
-                command_option = f"command_{mapping['command_name']}"
-                
-                self.config_manager.set_value('command', binding_option, wayfire_binding)
-                self.config_manager.set_value('command', command_option, mapping['command'])
-                
-                # Verify it was set
-                check_binding = self.config_manager.get_value('command', binding_option)
-                check_command = self.config_manager.get_value('command', command_option)
-                print(f"  → Set in config: {binding_option} = {check_binding}")
-                print(f"  → Set in config: {command_option} = {check_command}")
-                
-                # If plugin required, add note
-                if mapping.get('plugin'):
-                    print(f"✓ Applied media key: {gsettings_key} -> {mapping['command_name']} "
-                          f"(requires {mapping['plugin']} plugin)")
-                else:
-                    print(f"✓ Applied media key: {gsettings_key} = {wayfire_binding} -> {mapping['command']}")
-            else:
-                # No binding set, remove if exists
-                print(f"  → {gsettings_key}: could not convert keybinding '{keybinding}'")
-                self._remove_media_key_binding(mapping['command_name'])
-        
+                print(f"✓ Applied media key: {gsettings_key} = {wayfire_binding} -> {command}")
+
         except Exception as e:
             print(f"Error applying media key {gsettings_key}: {e}", file=sys.stderr)
             import traceback
             traceback.print_exc()
-    
+
     def _remove_media_key_binding(self, command_name: str):
         """Remove a media key binding"""
         binding_option = f"binding_{command_name}"
         command_option = f"command_{command_name}"
-        
+
         self.config_manager.remove_option('command', binding_option)
         self.config_manager.remove_option('command', command_option)
-    
+
     def _on_media_key_changed(self, key: str, mapping: dict):
         """Handle media key change"""
         print(f"Media key changed: {key}")
