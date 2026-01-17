@@ -111,6 +111,11 @@ class TransformFunctions:
                 'Page_Down': 'PAGEDOWN',
                 'Prior': 'PAGEUP',
                 'Next': 'PAGEDOWN',
+                'XF86AudioLowerVolume':'VOLUMEDOWN',
+                'XF86AudioRaiseVolume':'VOLUMEUP',
+                'XF86AudioMute':'MUTE',
+                'XF86KbdBrightnessUp':'BRIGHTNESSUP',
+                'XF86KbdBrightnessDown':'BRIGHTNESSDOWN'
             }
             key = key_map.get(key, key)
 

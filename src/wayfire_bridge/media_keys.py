@@ -193,6 +193,18 @@ MEDIA_KEY_MAPPINGS = {
         'fallback_command': '',
         'plugin': None
     },
+    'keyboard-brightness-down': {
+        'command_name': 'on_keyboard_brightness_down',
+        'command': "dbus-send --session --type=method_call --dest=org.gnome.SettingsDaemon.Power /org/gnome/SettingsDaemon/Power org.gnome.SettingsDaemon.Power.Screen.StepDown ",
+        'fallback_command': '',
+        'plugin': None
+    },
+    'keyboard-brightness-up': {
+        'command_name': 'on_keyboard_brightness_up',
+        'command': "dbus-send --session --type=method_call --dest=org.gnome.SettingsDaemon.Power /org/gnome/SettingsDaemon/Power org.gnome.SettingsDaemon.Power.Screen.StepUp ",
+        'fallback_command': '',
+        'plugin': None
+    },
 }
 
 
