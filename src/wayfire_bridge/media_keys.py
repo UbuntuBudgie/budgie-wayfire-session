@@ -195,13 +195,13 @@ MEDIA_KEY_MAPPINGS = {
     },
     'keyboard-brightness-down': {
         'command_name': 'on_keyboard_brightness_down',
-        'command': "dbus-send --session --type=method_call --dest=org.gnome.SettingsDaemon.Power /org/gnome/SettingsDaemon/Power org.gnome.SettingsDaemon.Power.Screen.StepDown ",
+        'command': "budgie-brightness-helper --down",
         'fallback_command': '',
         'plugin': None
     },
     'keyboard-brightness-up': {
         'command_name': 'on_keyboard_brightness_up',
-        'command': "dbus-send --session --type=method_call --dest=org.gnome.SettingsDaemon.Power /org/gnome/SettingsDaemon/Power org.gnome.SettingsDaemon.Power.Screen.StepUp ",
+        'command': "budgie-brightness-helper --up",
         'fallback_command': '',
         'plugin': None
     },
