@@ -17,8 +17,8 @@ class CustomKeybindingsHandler:
     def __init__(self, config_manager, transforms):
         self.config_manager = config_manager
         self.transforms = transforms
-        self.schema = 'org.gnome.settings-daemon.plugins.media-keys'
-        self.custom_schema = 'org.gnome.settings-daemon.plugins.media-keys.custom-keybinding'
+        self.schema = 'org.buddiesofbudgie.settings-daemon.plugins.media-keys'
+        self.custom_schema = 'org.buddiesofbudgie.settings-daemon.plugins.media-keys.custom-keybinding'
         self.settings = None
 
         # Track custom keybindings: path -> {name, sanitized_name, command, binding}
