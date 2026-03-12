@@ -14,7 +14,7 @@ At the login screen, choose the budgie (wayfire) session to launch
 
 ```
 in the src folder
-wayfire_bridge.py              # Main entry point
+wayfire-bridge                 # Main entry point
 wayfire_bridge/
 ├── __init__.py                # Package initialization
 ├── bridge.py                  # Core bridge coordinator

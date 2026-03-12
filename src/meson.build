@@ -10,7 +10,7 @@ datadir   = join_paths(prefix, 'share')
 # Install Python entry point
 #
 install_data(
-  'wayfire_bridge.py',
+  'wayfire-bridge',
   install_dir: libexecdir
 )
 
