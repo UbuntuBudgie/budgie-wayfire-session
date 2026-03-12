@@ -114,6 +114,11 @@ GSETTINGS_MAPPINGS = {
         'option': 'left_handed_mode',
         'transform': 'bool'
     },
+    ('org.gnome.desktop.peripherals.mouse', 'double-click'): {
+        'section': 'input',
+        'option': 'double_click_time',
+        'transform': 'int'
+    },
 
     # ==========================================================================
     # Peripherals - Touchpad (libinput)
@@ -138,10 +143,11 @@ GSETTINGS_MAPPINGS = {
         'option': 'touchpad_cursor_speed',
         'transform': 'float'
     },
+    # Note: left-handed for touchpad handled specially due to 'mouse' option
     ('org.gnome.desktop.peripherals.touchpad', 'left-handed'): {
         'section': 'input',
         'option': 'touchpad_left_handed_mode',
-        'transform': 'bool'
+        'transform': 'touchpad_left_handed'  # Special transform
     },
     ('org.gnome.desktop.peripherals.touchpad', 'disable-while-typing'): {
         'section': 'input',
@@ -156,7 +162,7 @@ GSETTINGS_MAPPINGS = {
     ('org.gnome.desktop.peripherals.touchpad', 'send-events'): {
         'section': 'input',
         'option': 'touchpad_send_events',
-        'transform': 'str'
+        'transform': 'send_events'
     },
 
     # ==========================================================================
@@ -180,6 +186,9 @@ GSETTINGS_MAPPINGS = {
 
     # ==========================================================================
     # Input Sources (Keyboard Layout)
+    # These are written to BOTH wayfire.ini AND environment file
+    # wayfire.ini: Direct config for Wayfire to use
+    # environment: For XWayland and other apps
     # ==========================================================================
     ('org.gnome.desktop.input-sources', 'sources'): {
         'section': 'input',

@@ -35,7 +35,13 @@ class TransformFunctions:
 
     @staticmethod
     def focus_mode(value: str) -> str:
-        """Transform focus mode"""
+        """Transform focus mode
+
+        Wayfire modes: click, sloppy, mouse
+        - click: focus only on click
+        - sloppy: focus follows mouse without raising
+        - mouse: focus follows mouse and raises window
+        """
         mode_map = {
             'click': 'click',
             'sloppy': 'sloppy',
@@ -47,6 +53,32 @@ class TransformFunctions:
     def scroll_method(value: bool) -> str:
         """Transform two-finger scrolling to scroll method"""
         return 'two-finger' if value else 'edge'
+
+    @staticmethod
+    def touchpad_left_handed(value: str) -> str:
+        """Transform touchpad left-handed mode
+
+        GNOME uses: 'left', 'right', 'mouse' (follow mouse setting)
+        Wayfire uses: true/false
+
+        Note: When value is 'mouse', caller must check mouse left-handed setting
+        """
+        if value == 'left':
+            return 'true'
+        elif value == 'right':
+            return 'false'
+        # 'mouse' - caller needs to handle this specially
+        return 'mouse'
+
+    @staticmethod
+    def send_events(value: str) -> str:
+        """Transform touchpad send-events mode
+
+        GNOME: enabled, disabled, disabled-on-external-mouse
+        Wayfire: N/A (we handle via environment or input config if supported)
+        """
+        # Wayfire doesn't have direct equivalent, but we can map for future use
+        return value
 
     @staticmethod
     def num_workspaces(value: int) -> str:
@@ -75,7 +107,6 @@ class TransformFunctions:
         Wayfire format: <modifier1> <modifier2> KEY_X
         - Modifiers FIRST, lowercase, in angle brackets
         - Key LAST, uppercase with KEY_ prefix
-        - Example: <ctrl> <alt> KEY_T (NOT KEY_T CTRL ALT!)
         """
         if not gnome_binding or gnome_binding == 'disabled':
             return ''
@@ -99,8 +130,9 @@ class TransformFunctions:
         key = key.strip('<>')
 
         if key:
-            # Handle special key names
+            # Handle special key names and XF86 hardware keys
             key_map = {
+                # Standard keys
                 'Return': 'ENTER',
                 'BackSpace': 'BACKSPACE',
                 'Escape': 'ESC',
@@ -111,21 +143,50 @@ class TransformFunctions:
                 'Page_Down': 'PAGEDOWN',
                 'Prior': 'PAGEUP',
                 'Next': 'PAGEDOWN',
-                'XF86AudioLowerVolume':'VOLUMEDOWN',
-                'XF86AudioRaiseVolume':'VOLUMEUP',
-                'XF86AudioMute':'MUTE',
-                'XF86KbdBrightnessUp':'BRIGHTNESSUP',
-                'XF86KbdBrightnessDown':'BRIGHTNESSDOWN'
+
+                # XF86 Hardware keys -> KEY_ equivalents
+                'XF86AudioLowerVolume': 'VOLUMEDOWN',
+                'XF86AudioRaiseVolume': 'VOLUMEUP',
+                'XF86AudioMute': 'MUTE',
+                'XF86AudioPlay': 'PLAY',
+                'XF86AudioPause': 'PAUSE',
+                'XF86AudioStop': 'STOP',
+                'XF86AudioNext': 'NEXTSONG',
+                'XF86AudioPrev': 'PREVIOUSSONG',
+                'XF86AudioRewind': 'REWIND',
+                'XF86AudioForward': 'FORWARD',
+                'XF86AudioMedia': 'MEDIA',
+                'XF86AudioRecord': 'RECORD',
+                'XF86MonBrightnessUp': 'BRIGHTNESSUP',
+                'XF86MonBrightnessDown': 'BRIGHTNESSDOWN',
+                'XF86KbdBrightnessUp': 'BRIGHTNESSUP',
+                'XF86KbdBrightnessDown': 'BRIGHTNESSDOWN',
+                'XF86Display': 'DISPLAYTOGGLE',
+                'XF86WLAN': 'WLAN',
+                'XF86Tools': 'TOOLS',
+                'XF86Search': 'SEARCH',
+                'XF86LaunchA': 'LAUNCH0',
+                'XF86LaunchB': 'LAUNCH1',
+                'XF86Explorer': 'EXPLORER',
+                'XF86Calculator': 'CALC',
+                'XF86Mail': 'MAIL',
+                'XF86WWW': 'WWW',
+                'XF86HomePage': 'HOMEPAGE',
+                'XF86Favorites': 'FAVORITES',
+                'XF86Back': 'BACK',
+                'XF86Forward': 'FORWARD',
+                'XF86Eject': 'EJECT',
+                'XF86Sleep': 'SLEEP',
+                'XF86PowerOff': 'POWER',
+                'XF86Battery': 'BATTERY',
+                'XF86Bluetooth': 'BLUETOOTH',
             }
             key = key_map.get(key, key)
 
-            # Check if it's a hardware key (XF86*)
-            # These don't get KEY_ prefix
-            if key.startswith('XF86'):
-                key_part = key  # Use as-is: XF86AudioLowerVolume
-            else:
-                key_part = f"KEY_{key.upper()}"
+            # Build the keybinding: <modifier1> <modifier2> KEY_X
+            key_part = f"KEY_{key.upper()}"
 
+            # Modifiers FIRST (lowercase in angle brackets), key LAST
             if modifiers:
                 # Join modifiers with space, then add key at the end
                 return ' '.join(modifiers) + ' ' + key_part
@@ -153,12 +214,16 @@ class TransformFunctions:
 
     @staticmethod
     def xkb_layout(value: Any) -> str:
-        """Transform GNOME input sources to XKB layout"""
-        # GNOME format: [('xkb', 'gb'), ('xkb', 'us')]
-        # Wayfire format: gb,us
+        """Transform GNOME input sources to XKB layout
+
+        Note: This is only called for GSettings sources.
+        If sources is empty, return empty string so bridge can use
+        the priority system (locale1 or /etc/default/keyboard).
+        """
         try:
             if not value:
-                return 'us'  # Default fallback
+                # Empty sources - return empty so bridge uses fallback
+                return ''
 
             layouts = []
             variants = []
@@ -176,10 +241,13 @@ class TransformFunctions:
 
             if layouts:
                 return ','.join(layouts)
-            return 'us'
+
+            # No xkb sources found - return empty for fallback
+            return ''
+
         except Exception as e:
             print(f"Error parsing xkb layout: {e}")
-            return 'us'
+            return ''
 
     @staticmethod
     def xkb_options(value: Any) -> str:
@@ -192,3 +260,83 @@ class TransformFunctions:
             return ''
         except Exception:
             return ''
+
+
+def parse_options_string(options_string):
+    """Parse comma-separated options into a set."""
+    if not options_string:
+        return set()
+    return {opt.strip() for opt in options_string.split(',') if opt.strip()}
+
+
+def normalize_xkb_options(options_set):
+    """
+    Normalize XKB options to avoid conflicts.
+    Only certain option families are mutually exclusive.
+    Other families like lv3:, compose: can have multiple options.
+
+    Known mutually-exclusive families: grp, caps, ctrl, altwin
+
+    Args:
+        options_set: Set of XKB option strings
+
+    Returns:
+        Set of normalized options
+    """
+    if not options_set:
+        return set()
+
+    # Families where only one option should be kept
+    exclusive_families = {'grp', 'caps', 'ctrl', 'altwin'}
+
+    seen_exclusive = {}
+    normalized = set()
+
+    for option in sorted(options_set):  # Sort for consistent behavior
+        if ':' in option:
+            family = option.split(':', 1)[0]
+
+            if family in exclusive_families:
+                # Keep only first of exclusive families
+                if family not in seen_exclusive:
+                    seen_exclusive[family] = option
+                    normalized.add(option)
+                # else: skip duplicate exclusive family
+            else:
+                # Non-exclusive family - keep all
+                normalized.add(option)
+        else:
+            # Options without family (rare) - keep all
+            normalized.add(option)
+
+    return normalized
+
+
+def format_keyboard_layout(layout, variant=''):
+    """
+    Convert layout and variant strings to labwc/wayfire format.
+
+    Args:
+        layout: Comma-separated layout string
+        variant: Comma-separated variant string
+
+    Returns:
+        Formatted layout string or None if no layout
+    """
+    if not layout:
+        return None
+
+    if not variant:
+        return layout
+
+    variants = variant.split(',')
+    layouts = layout.split(',')
+
+    combined = []
+    for i, l in enumerate(layouts):
+        if i < len(variants) and variants[i]:
+            combined.append(f"{l}({variants[i]})")
+        else:
+            combined.append(l)
+
+    return ','.join(combined)

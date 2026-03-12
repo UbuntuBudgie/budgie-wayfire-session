@@ -14,7 +14,19 @@ RestartSec=5
 # Environment
 Environment="PYTHONUNBUFFERED=1"
 
-# Logging
+# Verbose / debug logging (off by default).
+# Uncomment the line below — or run:
+#   systemctl --user edit wayfire-bridge.service
+# and add an [Service] override with the line below — to enable debug output.
+# When enabled, all DEBUG messages are written to the journal and can be
+# inspected with:  journalctl --user -u wayfire-bridge -f
+#
+#Environment="WAYFIRE_BRIDGE_VERBOSE=1"
+#
+# Alternatively, pass -v / --verbose directly:
+#ExecStart=/usr/bin/wayfire-bridge --verbose
+
+# Logging — journald captures stderr automatically
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=wayfire-bridge

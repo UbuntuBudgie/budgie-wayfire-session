@@ -1,8 +1,10 @@
 """
-Core bridge logic for Wayfire Bridge
+Core bridge logic for Wayfire Bridge - Full Feature Parity with labwc
+Includes: environment file, peripherals, mutter settings, panel settings
 """
 
-import sys
+import os
+from pathlib import Path
 from typing import Dict
 import gi
 
@@ -10,23 +12,87 @@ gi.require_version('Gio', '2.0')
 gi.require_version('GLib', '2.0')
 from gi.repository import Gio, GLib
 
+try:
+    import dbus
+    import dbus.mainloop.glib
+    DBUS_AVAILABLE = True
+except ImportError:
+    DBUS_AVAILABLE = False
+
 from .config_manager import ConfigManager
 from .keybindings import CustomKeybindingsHandler
 from .media_keys import MediaKeysHandler
 from .mappings import GSETTINGS_MAPPINGS
-from .transforms import TransformFunctions
+from .transforms import (
+    TransformFunctions,
+    parse_options_string,
+    normalize_xkb_options,
+    format_keyboard_layout,
+)
 from .budgie_wm_actions import BudgieWMActionsHandler
+from .logging_config import get_logger
+
+log = get_logger(__name__)
+
+
+def read_key_value_file(filepath, strip_quotes=False):
+    """Read a key=value config file into a dict."""
+    config = {}
+    if not os.path.exists(filepath):
+        return config
+
+    try:
+        with open(filepath, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    key, value = line.split('=', 1)
+                    if strip_quotes:
+                        value = value.strip('"').strip("'")
+                    config[key] = value
+    except Exception:
+        log.debug("Could not read %s", filepath, exc_info=True)
+
+    return config
+
+
+def get_locale1_all_properties(dbus_bus):
+    """Get all properties from org.freedesktop.locale1"""
+    if not dbus_bus:
+        return None
+
+    try:
+        proxy = dbus_bus.get_object(
+            'org.freedesktop.locale1',
+            '/org/freedesktop/locale1'
+        )
+        props_iface = dbus.Interface(
+            proxy,
+            'org.freedesktop.DBus.Properties'
+        )
+        return props_iface.GetAll('org.freedesktop.locale1')
+    except Exception:
+        log.debug("Could not read locale1 properties", exc_info=True)
+        return None
 
 
 class WayfireBridge:
-    """Main bridge coordinator"""
+    """Main bridge coordinator with full feature parity to labwc bridge"""
 
     def __init__(self):
+        # Initialize dbus mainloop FIRST if available
+        if DBUS_AVAILABLE:
+            dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+
         self.config_manager = ConfigManager()
         self.transforms = TransformFunctions()
         self.settings_objects: Dict[str, Gio.Settings] = {}
+        self.dbus_system_bus = None
 
-        # Initialize handlers
+        # Delay config writes when doing bulk updates
+        self.delay_config_write = False
+
+        # Initialise handlers
         self.keybindings_handler = CustomKeybindingsHandler(
             self.config_manager,
             self.transforms
@@ -35,17 +101,288 @@ class WayfireBridge:
             self.config_manager,
             self.transforms
         )
-
         self.budgie_wm_handler = BudgieWMActionsHandler(
             self.config_manager,
             self.transforms
         )
+
+        # Setup locale1 monitoring
+        if DBUS_AVAILABLE:
+            self.setup_locale1_monitor()
 
         # Setup all gsettings monitoring
         self.setup_gsettings()
         self.keybindings_handler.setup()
         self.media_keys_handler.setup()
         self.budgie_wm_handler.setup()
+
+        # Setup peripheral monitoring with special handlers
+        self.setup_peripheral_monitoring()
+
+        # Setup mutter and panel settings
+        self.setup_mutter_settings()
+        self.setup_panel_settings()
+
+        # Setup default terminal monitoring
+        self.setup_default_terminal()
+
+        # Write initial environment file
+        self.write_environment_file()
+
+        # Perform initial bridge config sync
+        self.bridge_config()
+
+    def setup_locale1_monitor(self):
+        """Setup monitoring of org.freedesktop.locale1 using dbus-python"""
+        try:
+            bus = dbus.SystemBus()
+            self.dbus_system_bus = bus
+
+            bus.add_signal_receiver(
+                self.on_locale1_properties_changed,
+                signal_name='PropertiesChanged',
+                dbus_interface='org.freedesktop.DBus.Properties',
+                path='/org/freedesktop/locale1',
+                arg0='org.freedesktop.locale1'
+            )
+            log.info("locale1 monitoring enabled")
+        except Exception:
+            log.warning("Could not setup locale1 monitoring", exc_info=True)
+
+    def on_locale1_properties_changed(self, interface, changed, invalidated):
+        """Handler for PropertiesChanged signals from locale1"""
+        log.debug("locale1 PropertiesChanged received for interface: %s", interface)
+        if changed:
+            log.debug("Changed properties: %s", dict(changed))
+        if invalidated:
+            log.debug("Invalidated properties: %s", list(invalidated))
+
+        # Update environment file
+        self.write_environment_file()
+
+        # Reload wayfire config if not delayed
+        if not self.delay_config_write:
+            self.config_manager.reload_wayfire()
+
+    def setup_peripheral_monitoring(self):
+        """Setup special monitoring for peripheral settings that need custom handling"""
+        # Touchpad scroll method requires monitoring two keys
+        try:
+            source = Gio.SettingsSchemaSource.get_default()
+            if source.lookup('org.gnome.desktop.peripherals.touchpad', True):
+                touchpad_settings = Gio.Settings.new('org.gnome.desktop.peripherals.touchpad')
+                touchpad_settings.connect(
+                    'changed::two-finger-scrolling-enabled',
+                    self._on_scroll_method_changed
+                )
+                touchpad_settings.connect(
+                    'changed::edge-scrolling-enabled',
+                    self._on_scroll_method_changed
+                )
+                touchpad_settings.connect(
+                    'changed::left-handed',
+                    self._on_touchpad_left_handed_changed
+                )
+                self.settings_objects['org.gnome.desktop.peripherals.touchpad'] = touchpad_settings
+                log.debug("Touchpad monitoring enabled")
+        except Exception:
+            log.warning("Could not setup touchpad monitoring", exc_info=True)
+
+        # Mouse settings
+        try:
+            source = Gio.SettingsSchemaSource.get_default()
+            if source.lookup('org.gnome.desktop.peripherals.mouse', True):
+                mouse_settings = Gio.Settings.new('org.gnome.desktop.peripherals.mouse')
+                mouse_settings.connect('changed::double-click', self._on_double_click_changed)
+                mouse_settings.connect('changed::left-handed', self._on_mouse_left_handed_changed)
+                self.settings_objects['org.gnome.desktop.peripherals.mouse'] = mouse_settings
+                log.debug("Mouse monitoring enabled")
+        except Exception:
+            log.warning("Could not setup mouse monitoring", exc_info=True)
+
+    def setup_mutter_settings(self):
+        """Setup monitoring for mutter settings"""
+        try:
+            source = Gio.SettingsSchemaSource.get_default()
+            if source.lookup('org.gnome.mutter', True):
+                mutter_settings = Gio.Settings.new('org.gnome.mutter')
+                mutter_settings.connect('changed::center-new-windows', self._on_mutter_changed)
+                mutter_settings.connect('changed::overlay-key', self._on_mutter_changed)
+                self.settings_objects['org.gnome.mutter'] = mutter_settings
+                log.info("Mutter settings monitoring enabled")
+        except Exception:
+            log.warning("Could not setup mutter settings monitoring", exc_info=True)
+
+    def setup_panel_settings(self):
+        """Setup monitoring for panel settings"""
+        try:
+            source = Gio.SettingsSchemaSource.get_default()
+            if source.lookup('com.solus-project.budgie-panel', True):
+                panel_settings = Gio.Settings.new('com.solus-project.budgie-panel')
+                panel_settings.connect('changed::notification-position', self._on_panel_changed)
+                self.settings_objects['com.solus-project.budgie-panel'] = panel_settings
+                log.info("Panel settings monitoring enabled")
+        except Exception:
+            log.warning("Could not setup panel settings monitoring", exc_info=True)
+
+    def setup_default_terminal(self):
+        """Setup monitoring for default terminal"""
+        try:
+            source = Gio.SettingsSchemaSource.get_default()
+            if source.lookup('org.gnome.desktop.default-applications.terminal', True):
+                terminal_settings = Gio.Settings.new('org.gnome.desktop.default-applications.terminal')
+                terminal_settings.connect('changed::exec', self._on_default_terminal_changed)
+                self.settings_objects['org.gnome.desktop.default-applications.terminal'] = terminal_settings
+                log.info("Default terminal monitoring enabled")
+        except Exception:
+            log.warning("Could not setup default terminal monitoring", exc_info=True)
+
+    def _on_scroll_method_changed(self, settings, key):
+        """Handle scroll method change (two keys control one setting)"""
+        try:
+            two_finger = settings.get_boolean("two-finger-scrolling-enabled")
+            edge_scroll = settings.get_boolean("edge-scrolling-enabled")
+
+            scroll_method = 'two-finger' if two_finger else ('edge' if edge_scroll else 'none')
+
+            self.config_manager.set_value('input', 'scroll_method', scroll_method)
+            log.debug("Scroll method changed to: %s", scroll_method)
+
+            if not self.delay_config_write:
+                self.config_manager.save()
+                self.config_manager.reload_wayfire()
+        except Exception:
+            log.exception("Error handling scroll method change")
+
+    def _on_double_click_changed(self, settings, key):
+        """Handle mouse double-click time change"""
+        try:
+            value = settings.get_int('double-click')
+            self.config_manager.set_value('input', 'double_click_time', str(value))
+            log.debug("Double-click time changed to: %d", value)
+
+            if not self.delay_config_write:
+                self.config_manager.save()
+                self.config_manager.reload_wayfire()
+        except Exception:
+            log.exception("Error handling double-click time change")
+
+    def _on_touchpad_left_handed_changed(self, settings, key):
+        """Handle touchpad left-handed change with 'mouse' mode support"""
+        try:
+            value = settings.get_string('left-handed')
+            log.debug("Touchpad left-handed changed to: %s", value)
+
+            if value == 'left':
+                result = 'true'
+            elif value == 'right':
+                result = 'false'
+            else:  # 'mouse' - follow mouse setting
+                mouse_settings = self.settings_objects.get('org.gnome.desktop.peripherals.mouse')
+                if mouse_settings:
+                    mouse_left_handed = mouse_settings.get_boolean('left-handed')
+                    result = 'true' if mouse_left_handed else 'false'
+                    log.debug("Touchpad follows mouse left-handed: %s", result)
+                else:
+                    result = 'false'
+
+            self.config_manager.set_value('input', 'touchpad_left_handed_mode', result)
+
+            if not self.delay_config_write:
+                self.config_manager.save()
+                self.config_manager.reload_wayfire()
+        except Exception:
+            log.exception("Error handling touchpad left-handed change")
+
+    def _on_mouse_left_handed_changed(self, settings, key):
+        """When mouse left-handed changes, update touchpad if in 'mouse' mode"""
+        try:
+            touchpad_settings = self.settings_objects.get('org.gnome.desktop.peripherals.touchpad')
+            if not touchpad_settings:
+                return
+
+            touchpad_mode = touchpad_settings.get_string('left-handed')
+            if touchpad_mode != 'mouse':
+                return  # Touchpad not following mouse
+
+            mouse_left_handed = settings.get_boolean('left-handed')
+            result = 'true' if mouse_left_handed else 'false'
+
+            log.debug("Mouse left-handed changed, updating touchpad (mouse mode): %s", result)
+
+            self.config_manager.set_value('input', 'touchpad_left_handed_mode', result)
+
+            if not self.delay_config_write:
+                self.config_manager.save()
+                self.config_manager.reload_wayfire()
+        except Exception:
+            log.exception("Error handling mouse left-handed change for touchpad")
+
+    def _on_mutter_changed(self, settings, key):
+        """Handle mutter settings changes"""
+        try:
+            if key == 'center-new-windows':
+                value = settings.get_boolean(key)
+                # Wayfire doesn't have exact equivalent, log for now
+                log.debug("Mutter center-new-windows changed to: %s", value)
+                # Could use window-rules plugin in future
+
+            elif key == 'overlay-key':
+                # Super key behavior - handled via keybindings
+                value = settings.get_string(key)
+                log.debug("Mutter overlay-key changed to: %s", value)
+
+        except Exception:
+            log.exception("Error handling mutter settings change")
+
+    def _on_panel_changed(self, settings, key):
+        """Handle panel settings changes"""
+        try:
+            if key == 'notification-position':
+                position = settings.get_string(key)
+                log.debug("Panel notification-position changed to: %s", position)
+
+                # Map Budgie notification positions
+                position_map = {
+                    'BUDGIE_NOTIFICATION_POSITION_TOP_LEFT': ('top', 'left'),
+                    'BUDGIE_NOTIFICATION_POSITION_TOP_RIGHT': ('top', 'right'),
+                    'BUDGIE_NOTIFICATION_POSITION_BOTTOM_LEFT': ('bottom', 'left'),
+                    'BUDGIE_NOTIFICATION_POSITION_BOTTOM_RIGHT': ('bottom', 'right'),
+                }
+
+                if position in position_map:
+                    v_pos, h_pos = position_map[position]
+                    log.debug("Notification position: vertical=%s, horizontal=%s", v_pos, h_pos)
+                    # Store for potential window rules configuration
+                    self.config_manager.set_value('notifications', 'vertical_position', v_pos)
+                    self.config_manager.set_value('notifications', 'horizontal_position', h_pos)
+
+                    if not self.delay_config_write:
+                        self.config_manager.save()
+                        self.config_manager.reload_wayfire()
+
+        except Exception:
+            log.exception("Error handling panel settings change")
+
+    def _on_default_terminal_changed(self, settings, key):
+        """Handle default terminal change"""
+        try:
+            if key == 'exec':
+                terminal = settings.get_string(key)
+                log.debug("Default terminal changed to: %s", terminal)
+
+                # Update the terminal keybinding command
+                current_command = self.config_manager.get_value('command', 'command_launch_terminal')
+                if current_command:
+                    self.config_manager.set_value('command', 'command_launch_terminal', terminal)
+                    log.info("Updated terminal command to: %s", terminal)
+
+                    if not self.delay_config_write:
+                        self.config_manager.save()
+                        self.config_manager.reload_wayfire()
+
+        except Exception:
+            log.exception("Error handling default terminal change")
 
     def setup_gsettings(self):
         """Setup gsettings monitoring for all mapped keys"""
@@ -61,10 +398,10 @@ class WayfireBridge:
                 # Check if schema exists
                 source = Gio.SettingsSchemaSource.get_default()
                 if not source.lookup(schema, True):
-                    print(f"Schema {schema} not found, skipping", file=sys.stderr)
+                    log.warning("Schema %s not found, skipping", schema)
                     continue
 
-                # Create settings object if not exists
+                # Create settings object if not already cached
                 if schema not in self.settings_objects:
                     self.settings_objects[schema] = Gio.Settings.new(schema)
 
@@ -80,61 +417,415 @@ class WayfireBridge:
                         self._on_setting_changed(sc, k, se, o, t)
                 )
 
-            except Exception as e:
-                print(f"Error setting up {schema}::{key}: {e}", file=sys.stderr)
+            except Exception:
+                log.exception("Error setting up %s::%s", schema, key)
 
     def _apply_setting(self, schema: str, key: str, section: str,
                        option: str, transform):
-        """Apply a gsettings value to wayfire config"""
+        """Apply a gsettings value to the wayfire config"""
         try:
             settings = self.settings_objects[schema]
             value = settings.get_value(key).unpack()
             transformed_value = transform(value)
 
-            # Debug: Show what we're setting
-            print(f"Applying {schema}::{key}")
-            print(f"  → Raw value: {value} (type: {type(value).__name__})")
-            print(f"  → Transformed: {transformed_value} (type: {type(transformed_value).__name__})")
-            print(f"  → Target: [{section}] {option}")
+            # Special handling for keyboard layout - use fallback if empty
+            if option == 'xkb_layout' and not transformed_value:
+                # GSettings is empty, use the priority system
+                transformed_value = self.get_keyboard_layout()
+                log.debug("GSettings xkb_layout empty, using fallback: %s", transformed_value)
+
+            # Special handling for xkb_options - use fallback if empty
+            elif option == 'xkb_options' and not transformed_value:
+                # GSettings is empty, use the priority system
+                transformed_value = self.get_merged_xkb_options()
+                log.debug("GSettings xkb_options empty, using fallback: %s", transformed_value)
+
+            # Special handling for touchpad_left_handed with 'mouse' mode
+            elif option == 'touchpad_left_handed_mode' and transformed_value == 'mouse':
+                mouse_settings = self.settings_objects.get('org.gnome.desktop.peripherals.mouse')
+                if mouse_settings:
+                    mouse_left_handed = mouse_settings.get_boolean('left-handed')
+                    transformed_value = 'true' if mouse_left_handed else 'false'
+                    log.debug("Touchpad follows mouse left-handed: %s", transformed_value)
+                else:
+                    transformed_value = 'false'
+
+            log.debug(
+                "Applying %s::%s  raw=%r (%s)  transformed=%r (%s)  target=[%s] %s",
+                schema, key,
+                value, type(value).__name__,
+                transformed_value, type(transformed_value).__name__,
+                section, option,
+            )
 
             self.config_manager.set_value(section, option, str(transformed_value))
 
-            # Verify it was set
-            check_value = self.config_manager.get_value(section, option)
-            print(f"  → Verified in config: {check_value}")
+            log.debug(
+                "Applied %s::%s -> [%s] %s = %s",
+                schema, key, section, option, transformed_value,
+            )
 
-            print(f"✓ Applied {schema}::{key} -> [{section}] {option} = {transformed_value}")
-
-        except Exception as e:
-            print(f"Error applying {schema}::{key}: {e}", file=sys.stderr)
-            import traceback
-            traceback.print_exc()
+        except Exception:
+            log.exception("Error applying %s::%s", schema, key)
 
     def _on_setting_changed(self, schema: str, key: str, section: str,
-                           option: str, transform):
-        """Handle gsettings change"""
-        print(f"Setting changed: {schema}::{key}")
-        self._apply_setting(schema, key, section, option, transform)
-        self.config_manager.save()
-        self.config_manager.reload_wayfire()
+                            option: str, transform):
+        """Handle a gsettings change event"""
+        log.debug("Setting changed: %s::%s", schema, key)
+
+        # If input-sources changed, regenerate environment file AND update config
+        if schema == 'org.gnome.desktop.input-sources':
+            self.write_environment_file()
+            # Also write directly to wayfire.ini
+            self._apply_setting(schema, key, section, option, transform)
+
+        # If cursor settings changed, regenerate environment file
+        elif schema == 'org.gnome.desktop.interface' and key in ('cursor-theme', 'cursor-size'):
+            self.write_environment_file()
+
+        else:
+            self._apply_setting(schema, key, section, option, transform)
+
+        if not self.delay_config_write:
+            self.config_manager.save()
+            self.config_manager.reload_wayfire()
+
+    def get_keyboard_layout(self):
+        """Get keyboard layout from GSettings, locale1, or fallback"""
+        # 1. GSettings input-sources
+        if 'org.gnome.desktop.input-sources' in self.settings_objects:
+            settings = self.settings_objects['org.gnome.desktop.input-sources']
+            sources = settings.get_value('sources').unpack()
+
+            layout_parts = []
+            for source in sources:
+                if len(source) >= 2 and source[0] == 'xkb':
+                    extract = source[1].replace("'", "")
+                    if '+' in extract:
+                        rhs = extract.split('+')
+                        extract = f"{rhs[0]}({rhs[1]})"
+                    layout_parts.append(extract)
+
+            if layout_parts:
+                layout = ','.join(layout_parts)
+                log.debug("Using keyboard layout from GSettings: %s", layout)
+                return layout
+
+        # 2. systemd-localed
+        if self.dbus_system_bus:
+            props = get_locale1_all_properties(self.dbus_system_bus)
+            if props:
+                layout = props.get('X11Layout', '')
+                variant = props.get('X11Variant', '')
+                formatted = format_keyboard_layout(str(layout), str(variant))
+                if formatted:
+                    log.debug("Using keyboard layout from locale1: %s", formatted)
+                    return formatted
+
+        # 3. /etc/default/keyboard
+        keyboard_config = read_key_value_file('/etc/default/keyboard', strip_quotes=True)
+        layout = keyboard_config.get('XKBLAYOUT', '')
+        variant = keyboard_config.get('XKBVARIANT', '')
+        formatted = format_keyboard_layout(layout, variant)
+        if formatted:
+            log.debug("Using keyboard layout from /etc/default/keyboard: %s", formatted)
+            return formatted
+
+        # 4. Default
+        log.debug("Using default keyboard layout: us")
+        return 'us'
+
+    def get_merged_xkb_options(self):
+        """Get XKB options with priority: user GSettings > locale1 > /etc/default/keyboard > default"""
+        options_set = set()
+        gsettings_default = set()
+
+        # 1. GSettings (if user-modified)
+        if 'org.gnome.desktop.input-sources' in self.settings_objects:
+            settings = self.settings_objects['org.gnome.desktop.input-sources']
+            try:
+                user_value = settings.get_user_value('xkb-options')
+                if user_value is not None:
+                    gsettings_options = settings.get_strv('xkb-options')
+                    options_set = set(gsettings_options)
+                    log.debug("Using USER GSettings XKB options: %s", options_set)
+                else:
+                    gsettings_options = settings.get_strv('xkb-options')
+                    if gsettings_options:
+                        gsettings_default = set(gsettings_options)
+                    log.debug("GSettings xkb-options not user-modified")
+            except Exception:
+                log.debug("Could not read GSettings xkb-options", exc_info=True)
+
+        # 2. systemd-localed
+        if not options_set and self.dbus_system_bus:
+            props = get_locale1_all_properties(self.dbus_system_bus)
+            if props and 'X11Options' in props:
+                options_set = parse_options_string(str(props['X11Options']))
+                if options_set:
+                    log.debug("Got XKB options from locale1: %s", options_set)
+
+        # 3. /etc/default/keyboard
+        if not options_set:
+            keyboard_config = read_key_value_file('/etc/default/keyboard', strip_quotes=True)
+            options_set = parse_options_string(keyboard_config.get('XKBOPTIONS', ''))
+            if options_set:
+                log.debug("Got XKB options from /etc/default/keyboard: %s", options_set)
+
+        # 4. GSettings default (if nothing else found)
+        if not options_set and gsettings_default:
+            options_set = gsettings_default
+            log.debug("Using DEFAULT GSettings XKB options: %s", options_set)
+
+        if not options_set:
+            log.debug("No XKB options found from any source")
+            options_set = set()
+
+        # Normalize
+        options_set = normalize_xkb_options(options_set)
+
+        # Inject grp:alt_shift_toggle if multiple layouts and no grp: option
+        current_layout = self.get_keyboard_layout()
+        has_multiple_layouts = ',' in current_layout
+        has_grp_option = any(opt.startswith('grp:') for opt in options_set)
+
+        if has_multiple_layouts and not has_grp_option:
+            options_set.add('grp:alt_shift_toggle')
+            log.debug("Injected grp:alt_shift_toggle for multiple layouts")
+
+        result = ','.join(sorted(options_set))
+        log.debug("Final XKB options: %s", result)
+        return result
+
+    def get_locale_from_locale1(self):
+        """Get locale settings from systemd-localed"""
+        locale_vars = {}
+
+        if not self.dbus_system_bus:
+            return locale_vars
+
+        props = get_locale1_all_properties(self.dbus_system_bus)
+        if not props or 'Locale' not in props:
+            return locale_vars
+
+        for locale_entry in props['Locale']:
+            if '=' in locale_entry:
+                key, value = locale_entry.split('=', 1)
+                locale_vars[key] = value
+                log.debug("Got from locale1: %s=%s", key, value)
+
+        return locale_vars
+
+    def write_environment_file(self):
+        """Write environment file with keyboard, cursor, and locale settings"""
+        env_file = self.config_manager.config_path.parent / 'environment'
+
+        fully_managed_vars = {
+            'XKB_DEFAULT_LAYOUT', 'XKB_DEFAULT_OPTIONS',
+            'XCURSOR_THEME', 'XCURSOR_SIZE',
+            'LANG', 'LC_CTYPE', 'LC_NUMERIC', 'LC_TIME', 'LC_COLLATE',
+            'LC_MONETARY', 'LC_MESSAGES', 'LC_PAPER', 'LC_NAME',
+            'LC_ADDRESS', 'LC_TELEPHONE', 'LC_MEASUREMENT', 'LC_IDENTIFICATION'
+        }
+
+        existing_vars = read_key_value_file(str(env_file))
+        new_vars = {}
+
+        # Keyboard layout and options
+        new_vars['XKB_DEFAULT_LAYOUT'] = self.get_keyboard_layout()
+        new_vars['XKB_DEFAULT_OPTIONS'] = self.get_merged_xkb_options()
+
+        # Cursor settings
+        if 'org.gnome.desktop.interface' in self.settings_objects:
+            settings = self.settings_objects['org.gnome.desktop.interface']
+            cursor_theme = settings.get_string('cursor-theme')
+            if cursor_theme:
+                new_vars['XCURSOR_THEME'] = cursor_theme
+            cursor_size = settings.get_int('cursor-size')
+            if cursor_size:
+                new_vars['XCURSOR_SIZE'] = str(cursor_size)
+
+        # Locale settings
+        locale_from_locale1 = self.get_locale_from_locale1()
+        if locale_from_locale1:
+            log.debug("Got %d locale variables from locale1", len(locale_from_locale1))
+            new_vars.update(locale_from_locale1)
+        else:
+            # Fallback to environment
+            log.debug("No locale from locale1, using environment fallback")
+            for var in fully_managed_vars:
+                if var.startswith('LANG') or var.startswith('LC_'):
+                    value = os.environ.get(var)
+                    if value:
+                        new_vars[var] = value
+            if 'LANG' not in new_vars:
+                new_vars['LANG'] = 'en_US.UTF-8'
+
+        # Check if keyboard layout or XKB options changed
+        keyboard_changed = False
+        if 'XKB_DEFAULT_LAYOUT' in existing_vars:
+            if existing_vars['XKB_DEFAULT_LAYOUT'] != new_vars['XKB_DEFAULT_LAYOUT']:
+                keyboard_changed = True
+                log.info("Keyboard layout changed: %s -> %s",
+                        existing_vars['XKB_DEFAULT_LAYOUT'],
+                        new_vars['XKB_DEFAULT_LAYOUT'])
+        if 'XKB_DEFAULT_OPTIONS' in existing_vars:
+            if existing_vars['XKB_DEFAULT_OPTIONS'] != new_vars['XKB_DEFAULT_OPTIONS']:
+                keyboard_changed = True
+                log.info("XKB options changed: %s -> %s",
+                        existing_vars['XKB_DEFAULT_OPTIONS'],
+                        new_vars['XKB_DEFAULT_OPTIONS'])
+
+        # Merge: keep user vars, update managed ones
+        final_vars = {}
+        for key, value in existing_vars.items():
+            if key not in fully_managed_vars:
+                final_vars[key] = value
+        final_vars.update(new_vars)
+
+        # Write file
+        env_file.parent.mkdir(parents=True, exist_ok=True)
+
+        lines = [
+            "# Budgie Desktop - Wayfire environment configuration\n",
+            "# Variables fully managed by budgie: XKB_DEFAULT_*, XCURSOR_*, LC_*, LANG\n",
+            "# Other user customizations are preserved\n\n",
+        ]
+
+        xkb_vars = {k: v for k, v in final_vars.items() if k.startswith('XKB_')}
+        cursor_vars = {k: v for k, v in final_vars.items() if k.startswith('XCURSOR_')}
+        locale_vars = {k: v for k, v in final_vars.items() if k.startswith('LC_') or k == 'LANG'}
+        other_vars = {k: v for k, v in final_vars.items()
+                      if not k.startswith(('XKB_', 'XCURSOR_', 'LC_')) and k != 'LANG'}
+
+        for vars_dict in [xkb_vars, cursor_vars, locale_vars]:
+            if vars_dict:
+                for key in sorted(vars_dict.keys()):
+                    lines.append(f"{key}={vars_dict[key]}\n")
+                lines.append("\n")
+
+        if other_vars:
+            lines.append("# User customizations\n")
+            for key in sorted(other_vars.keys()):
+                lines.append(f"{key}={other_vars[key]}\n")
+
+        with open(env_file, "w") as f:
+            f.writelines(lines)
+
+        log.info("Updated environment file: %s", env_file)
+        
+        # Warn if keyboard settings changed
+        if keyboard_changed:
+            log.warning(
+                "Keyboard layout or options changed. "
+                "A Wayfire RESTART is required for changes to take effect. "
+                "Run: pkill wayfire && wayfire"
+            )
+
+    def bridge_config(self):
+        """Perform initial sync of all settings to wayfire config"""
+        log.info("Performing initial bridge config sync")
+        self.delay_config_write = True
+
+        try:
+            # Sync all peripheral settings
+            if 'org.gnome.desktop.peripherals.touchpad' in self.settings_objects:
+                touchpad = self.settings_objects['org.gnome.desktop.peripherals.touchpad']
+                touchpad_keys = [
+                    'natural-scroll', 'left-handed', 'speed',
+                    'tap-to-click', 'disable-while-typing',
+                    'click-method', 'send-events'
+                ]
+                for key in touchpad_keys:
+                    try:
+                        # Find the mapping for this key
+                        full_key = ('org.gnome.desktop.peripherals.touchpad', key)
+                        if full_key in GSETTINGS_MAPPINGS:
+                            mapping = GSETTINGS_MAPPINGS[full_key]
+                            transform = getattr(self.transforms, mapping.get('transform', 'str'))
+                            self._apply_setting(
+                                'org.gnome.desktop.peripherals.touchpad',
+                                key,
+                                mapping['section'],
+                                mapping['option'],
+                                transform
+                            )
+                    except Exception:
+                        log.debug("Could not sync touchpad key %s", key, exc_info=True)
+
+                # Special handling for scroll method
+                try:
+                    self._on_scroll_method_changed(touchpad, 'two-finger-scrolling-enabled')
+                except Exception:
+                    log.debug("Could not sync scroll method", exc_info=True)
+
+            # Sync all mouse settings
+            if 'org.gnome.desktop.peripherals.mouse' in self.settings_objects:
+                mouse = self.settings_objects['org.gnome.desktop.peripherals.mouse']
+                mouse_keys = ['natural-scroll', 'left-handed', 'speed', 'accel-profile']
+                for key in mouse_keys:
+                    try:
+                        full_key = ('org.gnome.desktop.peripherals.mouse', key)
+                        if full_key in GSETTINGS_MAPPINGS:
+                            mapping = GSETTINGS_MAPPINGS[full_key]
+                            transform = getattr(self.transforms, mapping.get('transform', 'str'))
+                            self._apply_setting(
+                                'org.gnome.desktop.peripherals.mouse',
+                                key,
+                                mapping['section'],
+                                mapping['option'],
+                                transform
+                            )
+                    except Exception:
+                        log.debug("Could not sync mouse key %s", key, exc_info=True)
+
+                # Double-click time
+                try:
+                    self._on_double_click_changed(mouse, 'double-click')
+                except Exception:
+                    log.debug("Could not sync double-click time", exc_info=True)
+
+            # Sync mutter settings
+            if 'org.gnome.mutter' in self.settings_objects:
+                mutter = self.settings_objects['org.gnome.mutter']
+                for key in ['center-new-windows', 'overlay-key']:
+                    try:
+                        self._on_mutter_changed(mutter, key)
+                    except Exception:
+                        log.debug("Could not sync mutter key %s", key, exc_info=True)
+
+            # Sync panel settings
+            if 'com.solus-project.budgie-panel' in self.settings_objects:
+                panel = self.settings_objects['com.solus-project.budgie-panel']
+                try:
+                    self._on_panel_changed(panel, 'notification-position')
+                except Exception:
+                    log.debug("Could not sync panel notification-position", exc_info=True)
+
+            # Sync default terminal
+            if 'org.gnome.desktop.default-applications.terminal' in self.settings_objects:
+                terminal = self.settings_objects['org.gnome.desktop.default-applications.terminal']
+                try:
+                    self._on_default_terminal_changed(terminal, 'exec')
+                except Exception:
+                    log.debug("Could not sync default terminal", exc_info=True)
+
+        finally:
+            self.delay_config_write = False
+            self.config_manager.save()
+            log.info("Initial bridge config sync complete")
 
     def run(self):
         """Run the bridge (blocking)"""
-        print("=" * 60)
-        print("Wayfire Bridge started")
-        print("=" * 60)
-        print(f"Config file: {self.config_manager.config_path}")
-        print(f"Monitoring {len(GSETTINGS_MAPPINGS)} gsettings keys")
-        print(f"Custom keybindings: enabled")
-        print(f"Media keys: enabled")
-        print("=" * 60)
-
-        # Save initial configuration
-        self.config_manager.save()
+        log.info(
+            "Wayfire Bridge started – config=%s  monitoring %d gsettings keys",
+            self.config_manager.config_path,
+            len(GSETTINGS_MAPPINGS),
+        )
 
         # Run main loop
         try:
             loop = GLib.MainLoop()
             loop.run()
         except KeyboardInterrupt:
-            print("\nShutting down Wayfire Bridge...")
+            log.info("Keyboard interrupt received – shutting down Wayfire Bridge")

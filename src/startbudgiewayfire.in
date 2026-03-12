@@ -93,6 +93,16 @@ fi
 WAYFIRE_CONFIG_FILE="${XDG_CONFIG_HOME:-${HOME}/.config}/budgie-desktop/wayfire/wayfire.ini"
 export WAYFIRE_CONFIG_FILE
 
+# Source the environment file
+WAYFIRE_ENV_FILE="${XDG_CONFIG_HOME:-${HOME}/.config}/budgie-desktop/wayfire/environment"
+if [ -f "${WAYFIRE_ENV_FILE}" ]; then
+    logger "Sourcing Wayfire environment: ${WAYFIRE_ENV_FILE}"
+    set -a  # automatically export all variables
+    . "${WAYFIRE_ENV_FILE}"
+    set +a
+    logger "Wayfire environment loaded: XKB_DEFAULT_LAYOUT=${XKB_DEFAULT_LAYOUT:-unset}"
+fi
+
 # Start a D-Bus session if there isn't one already.
 if [ -z "$DBUS_SESSION_BUS_ADDRESS" ]; then
     eval $(dbus-launch --sh-syntax --exit-with-session)
