@@ -193,12 +193,22 @@ class WayfireBridge:
             source = Gio.SettingsSchemaSource.get_default()
             if source.lookup('org.gnome.desktop.peripherals.mouse', True):
                 mouse_settings = Gio.Settings.new('org.gnome.desktop.peripherals.mouse')
-                mouse_settings.connect('changed::double-click', self._on_double_click_changed)
                 mouse_settings.connect('changed::left-handed', self._on_mouse_left_handed_changed)
+                mouse_settings.connect('changed::double-click', self._on_double_click_unsupported)
                 self.settings_objects['org.gnome.desktop.peripherals.mouse'] = mouse_settings
                 log.debug("Mouse monitoring enabled")
         except Exception:
             log.warning("Could not setup mouse monitoring", exc_info=True)
+
+    def _on_double_click_unsupported(self, settings, key):
+        """Wayfire has no double-click time setting in [input].
+        Log a warning so it's clear why this gsetting has no effect.
+        """
+        value = settings.get_int('double-click')
+        log.warning(
+            "double-click time changed to %dms but Wayfire has no equivalent "
+            "input option — this setting has no effect under Wayfire", value
+        )
 
     def setup_mutter_settings(self):
         """Setup monitoring for mutter settings"""
@@ -209,9 +219,72 @@ class WayfireBridge:
                 mutter_settings.connect('changed::center-new-windows', self._on_mutter_changed)
                 mutter_settings.connect('changed::overlay-key', self._on_mutter_changed)
                 self.settings_objects['org.gnome.mutter'] = mutter_settings
-                log.info("Mutter settings monitoring enabled")
+
+            self._setup_budgie_wm_focus_monitor()
+
         except Exception:
             log.warning("Could not setup mutter settings monitoring", exc_info=True)
+
+    def _setup_budgie_wm_focus_monitor(self):
+        """Monitor com.solus-project.budgie-wm::window-focus-mode.
+        labwc reads from this schema, not org.gnome.desktop.wm.preferences::focus-mode.
+        """
+        try:
+            source = Gio.SettingsSchemaSource.get_default()
+            if not source.lookup('com.solus-project.budgie-wm', True):
+                log.warning("com.solus-project.budgie-wm schema not found")
+                return
+
+            budgie_wm = Gio.Settings.new('com.solus-project.budgie-wm')
+            self.settings_objects['com.solus-project.budgie-wm'] = budgie_wm
+            budgie_wm.connect(
+                'changed::window-focus-mode',
+                lambda s, k: self._on_budgie_wm_focus_changed(s)
+            )
+            log.info("budgie-wm focus mode monitoring enabled")
+        except Exception:
+            log.warning("Could not setup budgie-wm focus monitor", exc_info=True)
+
+    def _on_budgie_wm_focus_changed(self, settings):
+        """Handle window-focus-mode from com.solus-project.budgie-wm.
+
+        Wayfire has no built-in focus_mode. Focus-follows-mouse is provided
+        entirely by the follow-focus plugin from wayfire-plugins-extra.
+
+        Mapping:
+        click  -> remove follow-focus from plugins list entirely
+        sloppy -> follow-focus loaded, raise_on_top = false
+        mouse  -> follow-focus loaded, raise_on_top = true
+        """
+        mode = settings.get_string('window-focus-mode')
+        log.info("Focus mode changed to: %s", mode)
+
+        if mode == 'click':
+            # Disable follow-focus entirely by removing it from plugins
+            self._remove_plugin('follow-focus')
+            # Clean up its section so there's no stale config
+            self.config_manager.set_value('follow-focus', 'change_view', 'false')
+        elif mode == 'sloppy':
+            # Focus follows mouse but don't raise
+            self._ensure_plugin('follow-focus')
+            self.config_manager.set_value('follow-focus', 'change_view', 'true')
+            self.config_manager.set_value('follow-focus', 'change_output', 'true')
+            self.config_manager.set_value('follow-focus', 'raise_on_top', 'false')
+        elif mode == 'mouse':
+            # Focus follows mouse AND raise the window
+            self._ensure_plugin('follow-focus')
+            self.config_manager.set_value('follow-focus', 'change_view', 'true')
+            self.config_manager.set_value('follow-focus', 'change_output', 'true')
+            self.config_manager.set_value('follow-focus', 'raise_on_top', 'true')
+
+        if not self.delay_config_write:
+            self.config_manager.save()
+            self.config_manager.reload_wayfire()
+    def _ensure_plugin(self, plugin_name: str):
+        self.config_manager.ensure_plugin(plugin_name)
+
+    def _remove_plugin(self, plugin_name: str):
+        self.config_manager.remove_plugin(plugin_name)
 
     def setup_panel_settings(self):
         """Setup monitoring for panel settings"""
@@ -253,19 +326,6 @@ class WayfireBridge:
                 self.config_manager.reload_wayfire()
         except Exception:
             log.exception("Error handling scroll method change")
-
-    def _on_double_click_changed(self, settings, key):
-        """Handle mouse double-click time change"""
-        try:
-            value = settings.get_int('double-click')
-            self.config_manager.set_value('input', 'double_click_time', str(value))
-            log.debug("Double-click time changed to: %d", value)
-
-            if not self.delay_config_write:
-                self.config_manager.save()
-                self.config_manager.reload_wayfire()
-        except Exception:
-            log.exception("Error handling double-click time change")
 
     def _on_touchpad_left_handed_changed(self, settings, key):
         """Handle touchpad left-handed change with 'mouse' mode support"""
@@ -323,10 +383,13 @@ class WayfireBridge:
         try:
             if key == 'center-new-windows':
                 value = settings.get_boolean(key)
-                # Wayfire doesn't have exact equivalent, log for now
-                log.debug("Mutter center-new-windows changed to: %s", value)
-                # Could use window-rules plugin in future
-
+                mode = 'center' if value else 'cascade'
+                self.config_manager.set_value('place', 'mode', mode)
+                self._ensure_plugin('place')
+                log.info("Placement mode set to: %s", mode)
+                if not self.delay_config_write:
+                    self.config_manager.save()
+                    self.config_manager.reload_wayfire()
             elif key == 'overlay-key':
                 # Super key behavior - handled via keybindings
                 value = settings.get_string(key)
@@ -713,7 +776,7 @@ class WayfireBridge:
             f.writelines(lines)
 
         log.info("Updated environment file: %s", env_file)
-        
+
         # Warn if keyboard settings changed
         if keyboard_changed:
             log.warning(
@@ -734,7 +797,12 @@ class WayfireBridge:
                 touchpad_keys = [
                     'natural-scroll', 'left-handed', 'speed',
                     'tap-to-click', 'disable-while-typing',
-                    'click-method', 'send-events'
+                    'click-method', 'send-events',
+                    'tap-and-drag',
+                    'tap-and-drag-lock',
+                    'middle-click-emulation',
+                    'tap-button-map',
+                    'accel-profile'
                 ]
                 for key in touchpad_keys:
                     try:
@@ -762,7 +830,7 @@ class WayfireBridge:
             # Sync all mouse settings
             if 'org.gnome.desktop.peripherals.mouse' in self.settings_objects:
                 mouse = self.settings_objects['org.gnome.desktop.peripherals.mouse']
-                mouse_keys = ['natural-scroll', 'left-handed', 'speed', 'accel-profile']
+                mouse_keys = ['natural-scroll', 'left-handed', 'speed', 'accel-profile','middle-click-emulation']
                 for key in mouse_keys:
                     try:
                         full_key = ('org.gnome.desktop.peripherals.mouse', key)
@@ -809,6 +877,23 @@ class WayfireBridge:
                     self._on_default_terminal_changed(terminal, 'exec')
                 except Exception:
                     log.debug("Could not sync default terminal", exc_info=True)
+
+            # Sync focus mode from budgie-wm
+            if 'com.solus-project.budgie-wm' in self.settings_objects:
+                try:
+                    self._on_budgie_wm_focus_changed(
+                        self.settings_objects['com.solus-project.budgie-wm']
+                    )
+                except Exception:
+                    log.debug("Could not sync budgie-wm focus mode", exc_info=True)
+
+            # Sync placement mode
+            if 'org.gnome.mutter' in self.settings_objects:
+                mutter = self.settings_objects['org.gnome.mutter']
+                try:
+                    self._on_mutter_changed(mutter, 'center-new-windows')
+                except Exception:
+                    log.debug("Could not sync mutter center-new-windows", exc_info=True)
 
         finally:
             self.delay_config_write = False

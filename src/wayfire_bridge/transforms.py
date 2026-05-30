@@ -261,6 +261,26 @@ class TransformFunctions:
         except Exception:
             return ''
 
+    @staticmethod
+    def placement_mode(value: bool) -> str:
+        """Transform mutter center-new-windows boolean to Wayfire place mode.
+
+        Wayfire [place] modes: center, cascade, random
+        - center-new-windows = true  -> center
+        - center-new-windows = false -> cascade  (matches labwc 'automatic')
+        """
+        return 'center' if value else 'cascade'
+
+    @staticmethod
+    def tap_button_map(value: str) -> str:
+        """Transform GNOME tap-button-map to Wayfire format.
+
+        GNOME values: 'default' (lrm), 'lrm' (left-right-middle), 'lmr' (left-middle-right)
+        Wayfire values: 'lrm', 'lmr'
+        """
+        if value == 'lmr':
+            return 'lmr'
+        return 'lrm'  # 'default' and 'lrm' both map to lrm
 
 def parse_options_string(options_string):
     """Parse comma-separated options into a set."""

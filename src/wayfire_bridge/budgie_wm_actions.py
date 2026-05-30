@@ -4,7 +4,6 @@ Handles hardcoded Budgie WM actions with their keybindings
 """
 
 import gi
-
 gi.require_version('Gio', '2.0')
 from gi.repository import Gio
 
@@ -12,9 +11,11 @@ from .logging_config import get_logger
 
 log = get_logger(__name__)
 
+# Default schema for most Budgie WM action keys
+_BUDGIE_WM_SCHEMA = 'com.solus-project.budgie-wm'
+_WM_KEYBINDINGS_SCHEMA = 'org.gnome.desktop.wm.keybindings'
 
-# Mapping of Budgie WM gsettings keys to hardcoded commands
-# Format: gsetting_key: {command_name, command}
+# Each entry may optionally specify 'schema' to override the default.
 BUDGIE_WM_ACTION_MAPPINGS = {
     'clear-notifications': {
         'command_name': 'budgie_clear_notifications',
@@ -70,6 +71,11 @@ BUDGIE_WM_ACTION_MAPPINGS = {
             'org.budgie_desktop.Raven.ToggleAppletView'
         ),
     },
+    'panel-run-dialog': {
+        'command_name': 'budgie_run_dialog',
+        'command': 'budgie-run-dialog',
+        'schema': _WM_KEYBINDINGS_SCHEMA,
+    },
 }
 
 
@@ -79,25 +85,32 @@ class BudgieWMActionsHandler:
     def __init__(self, config_manager, transforms):
         self.config_manager = config_manager
         self.transforms = transforms
-        self.schema = 'com.solus-project.budgie-wm'
-        self.settings = None
+        # Keyed by schema string -> Gio.Settings object
+        self.settings_by_schema: dict = {}
+
+    def _get_or_create_settings(self, schema: str):
+        """Return a cached Gio.Settings for the given schema, creating if needed."""
+        if schema not in self.settings_by_schema:
+            source = Gio.SettingsSchemaSource.get_default()
+            if not source.lookup(schema, True):
+                log.warning("Schema %s not found", schema)
+                return None
+            self.settings_by_schema[schema] = Gio.Settings.new(schema)
+        return self.settings_by_schema[schema]
 
     def setup(self):
         """Setup monitoring for Budgie WM action keys"""
         try:
-            source = Gio.SettingsSchemaSource.get_default()
-            if not source.lookup(self.schema, True):
-                log.warning("Budgie WM schema %s not found", self.schema)
-                return
-
-            self.settings = Gio.Settings.new(self.schema)
-
             for key, mapping in BUDGIE_WM_ACTION_MAPPINGS.items():
+                schema = mapping.get('schema', _BUDGIE_WM_SCHEMA)
+                settings = self._get_or_create_settings(schema)
+                if settings is None:
+                    continue
                 try:
-                    self._apply_action_key(key, mapping)
-                    self.settings.connect(
+                    self._apply_action_key(key, mapping, settings)
+                    settings.connect(
                         f'changed::{key}',
-                        lambda s, k, m=mapping, gk=key: self._on_action_key_changed(gk, m),
+                        lambda s, k, m=mapping, gk=key: self._on_action_key_changed(gk, m, s),
                     )
                 except Exception:
                     log.exception("Error setting up Budgie WM action %s", key)
@@ -106,20 +119,16 @@ class BudgieWMActionsHandler:
                 "Budgie WM actions monitoring enabled (%d actions)",
                 len(BUDGIE_WM_ACTION_MAPPINGS),
             )
-
         except Exception:
             log.exception("Error setting up Budgie WM actions")
 
-    def _apply_action_key(self, gsettings_key: str, mapping: dict):
+    def _apply_action_key(self, gsettings_key: str, mapping: dict, settings: Gio.Settings):
         """Apply a Budgie WM action keybinding"""
         try:
-            if not self.settings:
-                return
-
             try:
-                value = self.settings.get_value(gsettings_key).unpack()
+                value = settings.get_value(gsettings_key).unpack()
             except Exception:
-                log.debug("Could not read Budgie WM action %s", gsettings_key)
+                log.debug("Could not read action key %s", gsettings_key)
                 return
 
             log.debug(
@@ -140,19 +149,17 @@ class BudgieWMActionsHandler:
                 self._remove_action_binding(mapping['command_name'])
                 return
 
-            # Convert each keybinding to Wayfire format
             wayfire_bindings = [
                 wb for kb in keybindings
                 if (wb := self.transforms.convert_keybinding(kb))
             ]
 
             if not wayfire_bindings:
-                log.debug("%s: could not convert any keybindings to Wayfire format", gsettings_key)
+                log.debug("%s: could not convert keybindings to Wayfire format", gsettings_key)
                 self._remove_action_binding(mapping['command_name'])
                 return
 
             wayfire_binding = ' | '.join(wayfire_bindings)
-
             binding_option = f"binding_{mapping['command_name']}"
             command_option = f"command_{mapping['command_name']}"
 
@@ -172,9 +179,9 @@ class BudgieWMActionsHandler:
         self.config_manager.remove_option('command', f'binding_{command_name}')
         self.config_manager.remove_option('command', f'command_{command_name}')
 
-    def _on_action_key_changed(self, key: str, mapping: dict):
+    def _on_action_key_changed(self, key: str, mapping: dict, settings: Gio.Settings):
         """Handle a Budgie WM action key change event"""
         log.debug("Budgie WM action changed: %s", key)
-        self._apply_action_key(key, mapping)
+        self._apply_action_key(key, mapping, settings)
         self.config_manager.save()
         self.config_manager.reload_wayfire()

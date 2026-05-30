@@ -31,11 +31,6 @@ GSETTINGS_MAPPINGS = {
         'option': 'button_order',
         'transform': 'button_layout'
     },
-    ('org.gnome.desktop.wm.preferences', 'focus-mode'): {
-        'section': 'core',
-        'option': 'focus_mode',
-        'transform': 'focus_mode'
-    },
     ('org.gnome.desktop.wm.preferences', 'num-workspaces'): {
         'section': 'vswitch',
         'option': 'vwidth',
@@ -45,29 +40,107 @@ GSETTINGS_MAPPINGS = {
     # ==========================================================================
     # Window Manager Keybindings
     # ==========================================================================
+    # --- [core] ---
+    # close is a core binding, not wm-actions
     ('org.gnome.desktop.wm.keybindings', 'close'): {
-        'section': 'command',
-        'option': 'binding_close',
+        'section': 'core',
+        'option': 'close_top_view',
         'transform': 'keybinding'
     },
-    ('org.gnome.desktop.wm.keybindings', 'maximize'): {
-        'section': 'command',
-        'option': 'binding_maximize',
-        'transform': 'keybinding'
-    },
+
+    # --- [wm-actions] activator bindings ---
     ('org.gnome.desktop.wm.keybindings', 'minimize'): {
-        'section': 'command',
-        'option': 'binding_minimize',
+        'section': 'wm-actions',
+        'option': 'minimize',
         'transform': 'keybinding'
     },
+    # maximize, unmaximize, toggle-maximized all map to the same toggle
+    ('org.gnome.desktop.wm.keybindings', 'maximize'): {
+        'section': 'wm-actions',
+        'option': 'toggle_maximize',
+        'transform': 'keybinding'
+    },
+    ('org.gnome.desktop.wm.keybindings', 'unmaximize'): {
+        'section': 'wm-actions',
+        'option': 'toggle_maximize',
+        'transform': 'keybinding'
+    },
+    ('org.gnome.desktop.wm.keybindings', 'toggle-maximized'): {
+        'section': 'wm-actions',
+        'option': 'toggle_maximize',
+        'transform': 'keybinding'
+    },
+    ('org.gnome.desktop.wm.keybindings', 'toggle-fullscreen'): {
+        'section': 'wm-actions',
+        'option': 'toggle_fullscreen',
+        'transform': 'keybinding'
+    },
+    ('org.gnome.desktop.wm.keybindings', 'toggle-on-all-workspaces'): {
+        'section': 'wm-actions',
+        'option': 'toggle_sticky',
+        'transform': 'keybinding'
+    },
+    ('org.gnome.desktop.wm.keybindings', 'lower'): {
+        'section': 'wm-actions',
+        'option': 'send_to_back',
+        'transform': 'keybinding'
+    },
+    ('org.gnome.desktop.wm.keybindings', 'raise'): {
+        'section': 'wm-actions',
+        'option': 'bring_to_front',
+        'transform': 'keybinding'
+    },
+    ('org.gnome.desktop.wm.keybindings', 'show-desktop'): {
+        'section': 'wm-actions',
+        'option': 'toggle_showdesktop',
+        'transform': 'keybinding'
+    },
+
+    # --- [switcher] - visual Alt-Tab style switcher ---
+    # switch-applications and switch-windows both map to the visual switcher
+    ('org.gnome.desktop.wm.keybindings', 'switch-applications'): {
+        'section': 'switcher',
+        'option': 'next_view',
+        'transform': 'keybinding'
+    },
+    ('org.gnome.desktop.wm.keybindings', 'switch-applications-backward'): {
+        'section': 'switcher',
+        'option': 'prev_view',
+        'transform': 'keybinding'
+    },
+    ('org.gnome.desktop.wm.keybindings', 'switch-windows'): {
+        'section': 'switcher',
+        'option': 'next_view',
+        'transform': 'keybinding'
+    },
+    ('org.gnome.desktop.wm.keybindings', 'switch-windows-backward'): {
+        'section': 'switcher',
+        'option': 'prev_view',
+        'transform': 'keybinding'
+    },
+
+    # --- [fast-switcher] - instant Alt-Escape style switcher ---
+    # cycle-windows maps to fast-switcher (no visual, instant switch)
+    ('org.gnome.desktop.wm.keybindings', 'cycle-windows'): {
+        'section': 'fast-switcher',
+        'option': 'activate',
+        'transform': 'keybinding'
+    },
+    ('org.gnome.desktop.wm.keybindings', 'cycle-windows-backward'): {
+        'section': 'fast-switcher',
+        'option': 'activate_backward',
+        'transform': 'keybinding'
+    },
+
+    # --- [vswitch] - workspace switching (already correct) ---
     ('org.gnome.desktop.wm.keybindings', 'move-to-workspace-left'): {
-        'section': 'command',
-        'option': 'binding_move_left',
+        'section': 'vswitch',
+        'option': 'binding_win_left',
         'transform': 'keybinding'
     },
     ('org.gnome.desktop.wm.keybindings', 'move-to-workspace-right'): {
-        'section': 'command',
-        'option': 'binding_move_right',
+        'section': 'vswitch',
+        'option': 'binding_win_right',
         'transform': 'keybinding'
     },
     ('org.gnome.desktop.wm.keybindings', 'switch-to-workspace-left'): {
@@ -90,7 +163,25 @@ GSETTINGS_MAPPINGS = {
         'option': 'binding_down',
         'transform': 'keybinding'
     },
-
+    ('org.gnome.desktop.wm.keybindings', 'switch-to-workspace-last'): {
+        'section': 'vswitch',
+        'option': 'binding_last',
+        'transform': 'keybinding'
+    },
+    ('org.gnome.mutter', 'center-new-windows'): {
+        'section': 'place',
+        'option': 'mode',
+        'transform': 'placement_mode'
+    },
+    # Keys with NO Wayfire equivalent — intentionally omitted:
+    # begin-move, begin-resize        — move/resize are mouse-only in Wayfire
+    # raise-or-lower                  — no equivalent
+    # maximize-horizontally/vertically — no equivalent
+    # switch-group, cycle-group (and backward variants) — no app grouping
+    # switch-panels, cycle-panels (and backward variants) — no panel cycling
+    # move-to-monitor-*               — oswitch has no gsettings-driven keybinding
+    # switch-to-workspace-1..8        — static numbered slots, not dynamically mappable
+    # move-to-workspace-1..8          — same
     # ==========================================================================
     # Peripherals - Mouse
     # ==========================================================================
@@ -114,10 +205,35 @@ GSETTINGS_MAPPINGS = {
         'option': 'left_handed_mode',
         'transform': 'bool'
     },
-    ('org.gnome.desktop.peripherals.mouse', 'double-click'): {
+    ('org.gnome.desktop.peripherals.mouse', 'middle-click-emulation'): {
         'section': 'input',
-        'option': 'double_click_time',
-        'transform': 'int'
+        'option': 'middle_emulation',
+        'transform': 'bool'
+    },
+    ('org.gnome.desktop.peripherals.touchpad', 'tap-and-drag'): {
+        'section': 'input',
+        'option': 'tap_and_drag',
+        'transform': 'bool'
+    },
+    ('org.gnome.desktop.peripherals.touchpad', 'tap-and-drag-lock'): {
+        'section': 'input',
+        'option': 'drag_lock',
+        'transform': 'bool'
+    },
+    ('org.gnome.desktop.peripherals.touchpad', 'middle-click-emulation'): {
+        'section': 'input',
+        'option': 'middle_emulation',
+        'transform': 'bool'
+    },
+    ('org.gnome.desktop.peripherals.touchpad', 'tap-button-map'): {
+        'section': 'input',
+        'option': 'tap_button_map',
+        'transform': 'tap_button_map'   # needs a new transform — see below
+    },
+    ('org.gnome.desktop.peripherals.touchpad', 'accel-profile'): {
+        'section': 'input',
+        'option': 'touchpad_accel_profile',   # different key from mouse_accel_profile
+        'transform': 'str'
     },
 
     # ==========================================================================
