@@ -36,7 +36,11 @@ GSETTINGS_MAPPINGS = {
         'option': 'vwidth',
         'transform': 'int'
     },
-
+    ('org.gnome.desktop.wm.preferences', 'titlebar-font'): {
+        'section': 'decoration',
+        'option': 'font',
+        'transform': 'titlebar_font'
+    },
     # ==========================================================================
     # Window Manager Keybindings
     # ==========================================================================
@@ -182,6 +186,119 @@ GSETTINGS_MAPPINGS = {
     # move-to-monitor-*               — oswitch has no gsettings-driven keybinding
     # switch-to-workspace-1..8        — static numbered slots, not dynamically mappable
     # move-to-workspace-1..8          — same
+
+    # ==========================================================================
+    # Mutter Keybindings
+    # ==========================================================================
+    # toggle-tiled-left/right map to grid plugin half-screen slots.
+    # These are the Super+Left / Super+Right snap-to-half-screen bindings.
+    ('org.gnome.mutter.keybindings', 'toggle-tiled-left'): {
+        'section': 'grid',
+        'option': 'slot_l',
+        'transform': 'keybinding'
+    },
+    ('org.gnome.mutter.keybindings', 'toggle-tiled-right'): {
+        'section': 'grid',
+        'option': 'slot_r',
+        'transform': 'keybinding'
+    },
+
+    # ==========================================================================
+    # Workspace-specific keybindings
+    # ==========================================================================
+    # IMPORTANT: GSettings workspace numbers are 1-based.
+    # vswitch binding_N is 0-based.
+    # GSettings switch-to-workspace-1 -> vswitch binding_0
+    # GSettings switch-to-workspace-2 -> vswitch binding_1  etc.
+    #
+    # switch-to-workspace-last: labwc goes to absolute last workspace.
+    # Wayfire binding_last goes to previously-active workspace.
+    # No direct equivalent exists; binding_last is the closest match.
+
+    # --- Switch to numbered workspace ---
+    ('org.gnome.desktop.wm.keybindings', 'switch-to-workspace-1'): {
+        'section': 'vswitch',
+        'option': 'binding_0',
+        'transform': 'keybinding'
+    },
+    ('org.gnome.desktop.wm.keybindings', 'switch-to-workspace-2'): {
+        'section': 'vswitch',
+        'option': 'binding_1',
+        'transform': 'keybinding'
+    },
+    ('org.gnome.desktop.wm.keybindings', 'switch-to-workspace-3'): {
+        'section': 'vswitch',
+        'option': 'binding_2',
+        'transform': 'keybinding'
+    },
+    ('org.gnome.desktop.wm.keybindings', 'switch-to-workspace-4'): {
+        'section': 'vswitch',
+        'option': 'binding_3',
+        'transform': 'keybinding'
+    },
+    ('org.gnome.desktop.wm.keybindings', 'switch-to-workspace-last'): {
+        'section': 'vswitch',
+        'option': 'binding_last',
+        'transform': 'keybinding'
+        # Note: labwc 'last' = absolute final workspace.
+        # Wayfire binding_last = previously active workspace.
+        # Closest available equivalent.
+    },
+
+    # --- Move window to numbered workspace ---
+    ('org.gnome.desktop.wm.keybindings', 'move-to-workspace-1'): {
+        'section': 'vswitch',
+        'option': 'binding_win_0',
+        'transform': 'keybinding'
+    },
+    ('org.gnome.desktop.wm.keybindings', 'move-to-workspace-2'): {
+        'section': 'vswitch',
+        'option': 'binding_win_1',
+        'transform': 'keybinding'
+    },
+    ('org.gnome.desktop.wm.keybindings', 'move-to-workspace-3'): {
+        'section': 'vswitch',
+        'option': 'binding_win_2',
+        'transform': 'keybinding'
+    },
+    ('org.gnome.desktop.wm.keybindings', 'move-to-workspace-4'): {
+        'section': 'vswitch',
+        'option': 'binding_win_3',
+        'transform': 'keybinding'
+    },
+    ('org.gnome.desktop.wm.keybindings', 'move-to-workspace-5'): {
+        'section': 'vswitch',
+        'option': 'binding_win_4',
+        'transform': 'keybinding'
+    },
+    ('org.gnome.desktop.wm.keybindings', 'move-to-workspace-6'): {
+        'section': 'vswitch',
+        'option': 'binding_win_5',
+        'transform': 'keybinding'
+    },
+    ('org.gnome.desktop.wm.keybindings', 'move-to-workspace-7'): {
+        'section': 'vswitch',
+        'option': 'binding_win_6',
+        'transform': 'keybinding'
+    },
+    ('org.gnome.desktop.wm.keybindings', 'move-to-workspace-8'): {
+        'section': 'vswitch',
+        'option': 'binding_win_7',
+        'transform': 'keybinding'
+    },
+    ('org.gnome.desktop.wm.keybindings', 'move-to-workspace-last'): {
+        'section': 'vswitch',
+        'option': 'binding_win_last',
+        'transform': 'keybinding'
+        # Note: same semantic difference as switch-to-workspace-last above.
+    },
+
+    # switch-input-source and switch-input-source-backward are intentionally
+    # NOT mapped. Wayfire has no keybinding mechanism for switching layouts.
+    # Layout switching is handled entirely via xkb_options grp:* toggle options,
+    # which are written to [input] xkb_options by get_merged_xkb_options().
+    # The grp: option is auto-injected when multiple layouts are present.
+
     # ==========================================================================
     # Peripherals - Mouse
     # ==========================================================================
@@ -330,4 +447,5 @@ GSETTINGS_MAPPINGS = {
         'option': 'temperature',
         'transform': 'int'
     },
+
 }

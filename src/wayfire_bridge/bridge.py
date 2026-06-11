@@ -220,15 +220,20 @@ class WayfireBridge:
                 mutter_settings.connect('changed::overlay-key', self._on_mutter_changed)
                 self.settings_objects['org.gnome.mutter'] = mutter_settings
 
+            # mutter.keybindings is handled via GSETTINGS_MAPPINGS in setup_gsettings()
+            # but we need to confirm the schema exists and log appropriately
+            if source.lookup('org.gnome.mutter.keybindings', True):
+                log.info("org.gnome.mutter.keybindings schema found — tiling keybindings active")
+            else:
+                log.warning("org.gnome.mutter.keybindings schema not found — tiling keybindings unavailable")
+
             self._setup_budgie_wm_focus_monitor()
 
         except Exception:
             log.warning("Could not setup mutter settings monitoring", exc_info=True)
 
     def _setup_budgie_wm_focus_monitor(self):
-        """Monitor com.solus-project.budgie-wm::window-focus-mode.
-        labwc reads from this schema, not org.gnome.desktop.wm.preferences::focus-mode.
-        """
+        """Monitor com.solus-project.budgie-wm settings that need special handling."""
         try:
             source = Gio.SettingsSchemaSource.get_default()
             if not source.lookup('com.solus-project.budgie-wm', True):
@@ -237,13 +242,47 @@ class WayfireBridge:
 
             budgie_wm = Gio.Settings.new('com.solus-project.budgie-wm')
             self.settings_objects['com.solus-project.budgie-wm'] = budgie_wm
+
             budgie_wm.connect(
                 'changed::window-focus-mode',
                 lambda s, k: self._on_budgie_wm_focus_changed(s)
             )
-            log.info("budgie-wm focus mode monitoring enabled")
+            budgie_wm.connect(
+                'changed::edge-tiling',
+                lambda s, k: self._on_edge_tiling_changed(s)
+            )
+            log.info("budgie-wm monitoring enabled (focus-mode, edge-tiling)")
         except Exception:
-            log.warning("Could not setup budgie-wm focus monitor", exc_info=True)
+            log.warning("Could not setup budgie-wm monitor", exc_info=True)
+
+    def _on_edge_tiling_changed(self, settings):
+        """Handle edge-tiling from com.solus-project.budgie-wm.
+
+        labwc maps this to <snapping><range> of 10 or 0.
+
+        In Wayfire, aero-snap is controlled by TWO settings:
+        [move] enable_snap   — master switch for edge snapping during drag
+        [grid] mouse_snap    — whether dragging to edge triggers a grid slot
+
+        Both must be toggled together to match labwc behaviour.
+        The grid plugin must also be loaded for either to work.
+        """
+        enabled = settings.get_boolean('edge-tiling')
+        value = 'true' if enabled else 'false'
+
+        self.config_manager.set_value('move', 'enable_snap', value)
+        self.config_manager.set_value('grid', 'mouse_snap', value)
+
+        if enabled:
+            self._ensure_plugin('grid')
+            self._ensure_plugin('move')
+            log.info("Edge tiling enabled (move.enable_snap + grid.mouse_snap = true)")
+        else:
+            log.info("Edge tiling disabled (move.enable_snap + grid.mouse_snap = false)")
+
+        if not self.delay_config_write:
+            self.config_manager.save()
+            self.config_manager.reload_wayfire()
 
     def _on_budgie_wm_focus_changed(self, settings):
         """Handle window-focus-mode from com.solus-project.budgie-wm.
@@ -391,12 +430,52 @@ class WayfireBridge:
                     self.config_manager.save()
                     self.config_manager.reload_wayfire()
             elif key == 'overlay-key':
-                # Super key behavior - handled via keybindings
-                value = settings.get_string(key)
-                log.debug("Mutter overlay-key changed to: %s", value)
+                self._apply_overlay_key(settings.get_string(key))
 
         except Exception:
             log.exception("Error handling mutter settings change")
+
+    def _apply_overlay_key(self, key_name: str):
+        """Map mutter overlay-key to a Budgie panel menu binding in [command].
+
+        labwc fires the panel ActivateAction(2) dbus call on Super release.
+        Wayfire has no on-release bindings, so we use <super> alone as the
+        binding in [command], which fires on Super press.
+
+        This requires removing expo's default <super> toggle to avoid conflict,
+        since expo also claims <super> by default.
+        """
+        if not key_name:
+            log.debug("overlay-key is empty, skipping")
+            return
+
+        # Convert the key name to Wayfire format.
+        # mutter overlay-key is a plain string like "Super_L", not a GSettings
+        # keybinding array, so convert_keybinding won't work directly.
+        # In Wayfire, bare <super> is the correct binding for a lone Super press.
+        if key_name in ('Super_L', 'Super_R', 'Super'):
+            wayfire_binding = '<super>'
+        else:
+            # Fallback: attempt a normal conversion
+            wayfire_binding = self.transforms.convert_keybinding(f'<Super>{key_name}')
+            if not wayfire_binding:
+                log.warning("Could not convert overlay-key %s to Wayfire format", key_name)
+                return
+
+        budgie_panel_command = (
+            'dbus-send --type=method_call '
+            '--dest=org.budgie_desktop.Panel '
+            '/org/budgie_desktop/Panel '
+            'org.budgie_desktop.Panel.ActivateAction int32:2'
+        )
+
+        # Write the [command] binding for the Budgie panel menu
+        self.config_manager.set_value('command', 'binding_budgie_menu', wayfire_binding)
+        self.config_manager.set_value('command', 'command_budgie_menu', budgie_panel_command)
+
+        if not self.delay_config_write:
+            self.config_manager.save()
+            self.config_manager.reload_wayfire()
 
     def _on_panel_changed(self, settings, key):
         """Handle panel settings changes"""
@@ -788,6 +867,24 @@ class WayfireBridge:
     def bridge_config(self):
         """Perform initial sync of all settings to wayfire config"""
         log.info("Performing initial bridge config sync")
+
+        # Ensure all required plugins are in [core] plugins list
+        self.config_manager.ensure_wm_plugins()
+
+        # Log layout switching status so it's visible in journal
+        layout = self.get_keyboard_layout()
+        if ',' in layout:
+            options = self.get_merged_xkb_options()
+            grp = next((o for o in options.split(',') if o.startswith('grp:')), None)
+            log.info(
+                "Multiple keyboard layouts detected (%s). "
+                "Layout switching via xkb_options: %s. "
+                "Note: switch-input-source gsetting keybinding has no Wayfire equivalent — "
+                "switching is handled by the grp: xkb option.",
+                layout,
+                grp or 'none set — grp:alt_shift_toggle will be injected'
+            )
+
         self.delay_config_write = True
 
         try:
@@ -880,12 +977,15 @@ class WayfireBridge:
 
             # Sync focus mode from budgie-wm
             if 'com.solus-project.budgie-wm' in self.settings_objects:
+                budgie_wm = self.settings_objects['com.solus-project.budgie-wm']
                 try:
-                    self._on_budgie_wm_focus_changed(
-                        self.settings_objects['com.solus-project.budgie-wm']
-                    )
+                    self._on_budgie_wm_focus_changed(budgie_wm)
                 except Exception:
                     log.debug("Could not sync budgie-wm focus mode", exc_info=True)
+                try:
+                    self._on_edge_tiling_changed(budgie_wm)
+                except Exception:
+                    log.debug("Could not sync edge-tiling", exc_info=True)
 
             # Sync placement mode
             if 'org.gnome.mutter' in self.settings_objects:

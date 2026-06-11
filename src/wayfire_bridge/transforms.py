@@ -55,6 +55,23 @@ class TransformFunctions:
         return 'two-finger' if value else 'edge'
 
     @staticmethod
+    def titlebar_font(value: str) -> str:
+        """Transform GNOME titlebar-font Pango string to Wayfire decoration font.
+
+        labwc decomposes the Pango string into separate family/weight/slant/size
+        XML attributes. Wayfire's [decoration] font option takes the Pango string
+        directly, so this is a near pass-through.
+
+        GSettings value:  'Cantarell Bold 11'
+        Wayfire value:    'Cantarell Bold 11'
+
+        Empty string means use system default — fall back to sans-serif.
+        """
+        if not value or not value.strip():
+            return 'sans-serif'
+        return value.strip()
+
+    @staticmethod
     def touchpad_left_handed(value: str) -> str:
         """Transform touchpad left-handed mode
 

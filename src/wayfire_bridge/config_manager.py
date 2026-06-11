@@ -130,6 +130,21 @@ class ConfigManager:
         """Check if an option exists"""
         return section in self.config and option in self.config[section]
 
+    def ensure_wm_plugins(self):
+        """Ensure all plugins required for WM keybinding mappings are loaded.
+
+        Called once during bridge_config() initial sync. Covers:
+        wm-actions  — minimize, maximize, fullscreen, sticky, send_to_back etc.
+        grid        — slot_l, slot_r, mouse_snap
+        move        — enable_snap
+        place       — placement mode
+        switcher    — next_view, prev_view
+        fast-switcher — activate, activate_backward
+        """
+        required = ['wm-actions', 'grid', 'move', 'place', 'switcher', 'fast-switcher']
+        for plugin in required:
+            self.ensure_plugin(plugin)
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -194,7 +209,7 @@ class ConfigManager:
 
     def reload_wayfire(self):
         """Wayfire watches wayfire.ini and reloads it automatically.
-        
+
         Note: [core] options like focus_mode are NOT reloaded from file —
         use reload_wayfire_option() for those to apply changes at runtime via IPC.
         """
